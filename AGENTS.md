@@ -5,8 +5,10 @@
 - Run `cargo fmt --check` and `cargo test` for Rust changes.
 - Run `cargo clippy --all-targets --all-features -- -D warnings` when practical.
 - Use Conventional Commits for commit subjects: `<type>[optional scope]: <summary>`.
-- Keep the project compatible with Windows and Linux. Avoid platform-specific assumptions; validate platform-sensitive changes on both when possible.
+- Keep the project compatible with Windows and Linux. Follow `docs/decisions/0002-windows-linux-compatibility.md`, avoid platform-specific assumptions, and validate platform-sensitive changes on both when possible.
 - Avoid adding dependencies unless they are needed; explain why when you do.
 - Read relevant `docs/` decision records before design or implementation work.
 - For VI/RSRC binary-format work, consult the references and attribution guidance in `docs/decisions/0001-project-identity-and-format-references.md`.
+- Keep user documentation in `docs/user-guide/`, separate from decision records. Keep the README focused on the overview, quick start, and links to user docs.
+- When CLI behavior changes, update its `--help` text, relevant user documentation, and tests in the same change. Use Clap to derive help from CLI definitions; decision records explain rationale, not usage.
 - Record every project, design, or architecture decision in `docs/`, including context, alternatives, and consequences.
