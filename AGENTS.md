@@ -2,6 +2,7 @@
 
 - Keep changes focused and follow existing Rust style.
 - Add focused tests for every new feature.
+- Add concise module-level documentation and function doc comments that explain purpose, contracts, relevant errors, and invariants without restating obvious code.
 - Run `cargo fmt --check` and `cargo test` for Rust changes.
 - Run `cargo clippy --all-targets --all-features -- -D warnings` when practical.
 - Use Conventional Commits for commit subjects: `<type>[optional scope]: <summary>`.

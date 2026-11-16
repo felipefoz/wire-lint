@@ -10,6 +10,9 @@ WireLint needs a command-line interface that scans a LabVIEW project folder, run
 ## Decisions
 
 - Provide a `wirelint scan <folder>` command.
+- Keep CLI argument definitions and simple command dispatch in `src/main.rs` while the CLI remains small. When configuration, exclusions, and report handling make it substantially more complex, move the CLI parsing and dispatch into `src/cli.rs` and keep `main.rs` as a thin entry point.
+- Initially, scan recursively for `.vi`, `.vit`, `.vim`, `.ctl`, `.lvproj`, `.lvclass`, and `.lvlib` candidates, matching extensions case-insensitively. Do not include `.llb` archives.
+- Skip symbolic links encountered below the scan root and print sorted paths relative to the scan root. This initial scan discovers candidates by extension only; it does not parse files, load configuration, run rules, or generate reports.
 - Use YAML configuration to enable built-in analysis rules and set their options. User-authored scripts or custom checks are out of scope initially.
 - Support exclusions in the configuration, repeatable `--exclude` command-line options, and an `--exclude-from <FILE>` list.
 - Provide a human-readable terminal summary by default, with GitLab Code Quality JSON and GitHub SARIF as selectable report formats.
@@ -20,6 +23,5 @@ WireLint needs a command-line interface that scans a LabVIEW project folder, run
 
 - Configuration filename discovery, schema, and precedence between file and command-line settings.
 - Exclusion pattern syntax, path base, list-file format, and precedence.
-- Supported LabVIEW file types and scan traversal behavior.
 - Rule identifiers, default rule set, and per-rule configuration.
 - Mapping internal severities to report fields, exact report fields, and output-file behavior.
