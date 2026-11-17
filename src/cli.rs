@@ -24,7 +24,7 @@ pub struct Cli {
 enum Command {
     /// Discover LabVIEW files and run enabled analysis rules.
     #[command(
-        long_about = "Recursively analyze .vi, .vit, .vim, .ctl, .lvproj, .lvclass, and .lvlib files (case-insensitive). Skip .llb archives and symbolic links below the root. All built-in rules are enabled by default. Exit status: 0 = success, 1 = threshold reached, 2 = configuration, I/O, or analysis error. Unsupported binary formats are errors, never passing checks."
+        long_about = "Recursively analyze .vi, .vit, .vim, .ctl, .lvproj, .lvclass, and .lvlib files (case-insensitive). Skip .llb archives and symbolic links below the root. All built-in rules are enabled by default. Report the file count, findings, and summary without listing every discovered path. Exit status: 0 = success, 1 = threshold reached, 2 = configuration, I/O, or analysis error. Unsupported binary formats are errors, never passing checks."
     )]
     Scan {
         /// Folder to scan.
@@ -71,11 +71,13 @@ pub fn run(cli: Cli, output: &mut impl Write, errors: &mut impl Write) -> io::Re
             if files.is_empty() {
                 writeln!(output, "No supported LabVIEW files found.")?;
             } else {
-                writeln!(output, "Found {} supported LabVIEW file(s):", files.len())?;
-                for file in &files {
-                    writeln!(output, "{}", file.display())?;
-                }
+                writeln!(
+                    output,
+                    "Found {} supported LabVIEW file(s). Running enabled rules...",
+                    files.len()
+                )?;
             }
+            output.flush()?;
             let report = analysis::analyze(&folder, &files, &config);
             for finding in &report.findings {
                 writeln!(
@@ -146,6 +148,7 @@ mod tests {
             ".ctl",
             "default: error",
             "symbolic links",
+            "without listing every discovered path",
         ] {
             assert!(help.contains(expected), "{expected}: {help}");
         }

@@ -12,10 +12,9 @@ Or, after building or installing the executable:
 wirelint scan path/to/labview/project
 ```
 
-The scan command recursively searches the specified folder, prints supported
-file paths relative to that folder in sorted order, and runs enabled built-in
-analysis rules. Extension matching is case-insensitive. Files are read without
-launching LabVIEW or modifying source files.
+The scan command recursively searches the specified folder and runs enabled
+built-in analysis rules. Extension matching is case-insensitive. Files are read
+without launching LabVIEW or modifying source files.
 
 The initial candidate extensions are:
 
@@ -49,10 +48,15 @@ severity is `warning`, so findings do not fail the default `error` threshold.
 
 ## Output and exit statuses
 
-The terminal report includes the candidate listing, findings with relative
-paths and rule IDs, and a summary of successfully analyzed files, findings,
-and analysis errors. Files with format/read errors are not counted as analyzed.
-Errors go to stderr, while findings and the summary go to stdout. Other
+The terminal report starts with the number of discovered files and a message
+that enabled rules are running. It does not list every discovered path.
+Findings and analysis errors still include their relative file paths, in sorted
+file order within each group. Results are reported after analysis finishes;
+the initial message is not a per-file progress indicator.
+
+The final summary counts successfully analyzed files, findings, and analysis
+errors. Files with format/read errors are not counted as analyzed. Errors go
+to stderr, while the initial message, findings, and summary go to stdout. Other
 files are still analyzed after individual file errors.
 
 | Status | Meaning |
@@ -68,4 +72,6 @@ not passing checks. `--fail-on none` suppresses finding-based failures only,
 not analysis errors.
 
 Exclusions, GitLab Code Quality, and SARIF output are not implemented yet.
+Global diagnostic logging, including discovered-path details, is also deferred;
+see the [output and logging decision](../decisions/0007-concise-output-and-future-logging.md).
 Use `wirelint --help` and `wirelint scan --help` for CLI help.

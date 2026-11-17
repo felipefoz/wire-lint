@@ -11,6 +11,26 @@ All built-ins are enabled by default. Each has a stable ID, default severity,
 and shared `enabled` and `severity` configuration options. See
 [configuration](configuration.md) for YAML examples and exit thresholds.
 
+## Execution order
+
+WireLint processes discovered files sequentially, in sorted path order. For
+each file, it reads and parses the contents once into shared facts, then runs
+every enabled rule sequentially in built-in registry order before moving to
+the next file:
+
+```text
+File A: read/parse once -> Rule 1 -> Rule 2 -> ...
+File B: read/parse once -> Rule 1 -> Rule 2 -> ...
+```
+
+Rules reuse the shared facts without rereading the file. Neither files nor
+rules run in parallel. A finding does not stop the remaining rules or files.
+If reading or parsing fails, WireLint records an analysis error, skips the
+rules for that file, and continues with the next file.
+
+If all rules are disabled, discovery still runs, but file contents are not
+read or parsed. Findings and errors are reported after analysis finishes.
+
 ## `separate-compiled-code`
 
 Requires **Separate compiled code from source** to be enabled.

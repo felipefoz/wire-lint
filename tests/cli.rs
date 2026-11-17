@@ -133,6 +133,15 @@ fn scans_xml_and_applies_yaml_severity_and_cli_threshold() {
     let output = directory.scan(&[]);
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(output.status.code(), Some(0), "{stdout}");
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        [
+            "Found 3 supported LabVIEW file(s). Running enabled rules...",
+            "a.lvproj: warning [separate-compiled-code]: Enable separate compiled code from source (source-only setting).",
+            "c.lvlib: warning [separate-compiled-code]: Enable separate compiled code from source (source-only setting).",
+            "Analyzed 3 file(s); 2 finding(s); 0 analysis error(s).",
+        ]
+    );
     assert!(stdout.contains("Analyzed 3 file(s); 2 finding(s); 0 analysis error(s)."));
     assert!(stdout.contains("a.lvproj: warning [separate-compiled-code]"));
     assert!(!stdout.contains("b.LVCLASS: warning"));
