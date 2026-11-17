@@ -11,6 +11,8 @@ WireLint's original Rust RSRC reader was informed by the
   block/section offsets and the LVSR save-record layout.
 - [`LVinstrument.py`](https://github.com/mefistotelis/pylabview/blob/master/pylabview/LVinstrument.py):
   the `viFlags2` word and `SourceOnly` bit 10.
+- [`LVmisc.py`](https://github.com/mefistotelis/pylabview/blob/master/pylabview/LVmisc.py):
+  LabVIEW version-word encoding and major/minor components.
 
 These were consulted as descriptions of the file format, including a locally
 vendored copy in labview-mcp, on 2026-11-17. No third-party implementation code,

@@ -1,6 +1,7 @@
 //! Built-in rule contract and registry, independent of file formats and output.
 
-use crate::formats::FileFacts;
+use crate::config::RuleConfig;
+use crate::formats::{FileFacts, Version};
 use serde::Deserialize;
 use std::fmt;
 
@@ -32,11 +33,17 @@ pub trait Rule: Sync {
     fn default_severity(&self) -> Severity;
 
     /// Returns a finding message when the facts violate this rule.
-    fn check(&self, facts: &FileFacts) -> Option<&'static str>;
+    fn check(&self, facts: &FileFacts, options: Option<&RuleConfig>) -> Option<String>;
 }
 
 /// All built-in rules; add new implementations here without changing the runner.
-pub static BUILT_INS: &[&dyn Rule] = &[&SeparateCompiledCode];
+pub static BUILT_INS: &[&dyn Rule] = &[&SeparateCompiledCode, &MinimumSavedVersion];
+
+/// Default minimum release for saved LabVIEW files.
+pub const DEFAULT_MINIMUM_VERSION: Version = Version {
+    major: 20,
+    minor: 0,
+};
 
 /// Requires the file owner's source-only setting to be enabled.
 struct SeparateCompiledCode;
@@ -54,9 +61,37 @@ impl Rule for SeparateCompiledCode {
         Severity::Warning
     }
 
-    fn check(&self, facts: &FileFacts) -> Option<&'static str> {
+    fn check(&self, facts: &FileFacts, _options: Option<&RuleConfig>) -> Option<String> {
         (!facts.separate_compiled_code)
-            .then_some("Enable separate compiled code from source (source-only setting).")
+            .then(|| "Enable separate compiled code from source (source-only setting).".to_owned())
+    }
+}
+
+/// Requires each file's saved release to meet the configured minimum.
+struct MinimumSavedVersion;
+
+impl Rule for MinimumSavedVersion {
+    fn id(&self) -> &'static str {
+        "minimum-saved-version"
+    }
+
+    fn description(&self) -> &'static str {
+        "Require a minimum saved LabVIEW version (default 20.0)"
+    }
+
+    fn default_severity(&self) -> Severity {
+        Severity::Warning
+    }
+
+    fn check(&self, facts: &FileFacts, options: Option<&RuleConfig>) -> Option<String> {
+        let minimum = options
+            .and_then(|options| options.minimum_version)
+            .unwrap_or(DEFAULT_MINIMUM_VERSION);
+        let version = facts
+            .saved_version
+            .expect("active version rule requires a version fact");
+        (version < minimum)
+            .then(|| format!("Saved LabVIEW version {version} is below the minimum {minimum}."))
     }
 }
 
@@ -68,16 +103,65 @@ mod tests {
     fn reports_disabled_separation_only() {
         let rule = &BUILT_INS[0];
         assert!(
-            rule.check(&FileFacts {
-                separate_compiled_code: false
-            })
+            rule.check(
+                &FileFacts {
+                    separate_compiled_code: false,
+                    saved_version: None,
+                },
+                None
+            )
             .is_some()
         );
         assert!(
-            rule.check(&FileFacts {
-                separate_compiled_code: true
-            })
+            rule.check(
+                &FileFacts {
+                    separate_compiled_code: true,
+                    saved_version: None,
+                },
+                None
+            )
             .is_none()
         );
+    }
+
+    #[test]
+    fn compares_releases_numerically_at_the_boundary() {
+        let rule = &MinimumSavedVersion;
+        for (version, violation) in [
+            (
+                Version {
+                    major: 19,
+                    minor: 9,
+                },
+                true,
+            ),
+            (
+                Version {
+                    major: 20,
+                    minor: 0,
+                },
+                false,
+            ),
+            (
+                Version {
+                    major: 20,
+                    minor: 1,
+                },
+                false,
+            ),
+            (
+                Version {
+                    major: 21,
+                    minor: 0,
+                },
+                false,
+            ),
+        ] {
+            let facts = FileFacts {
+                separate_compiled_code: true,
+                saved_version: Some(version),
+            };
+            assert_eq!(rule.check(&facts, None).is_some(), violation);
+        }
     }
 }

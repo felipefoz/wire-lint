@@ -39,6 +39,10 @@ rules:
   separate-compiled-code:
     enabled: true
     severity: warning
+  minimum-saved-version:
+    enabled: true
+    severity: warning
+    minimum-version: '20.0'
 ```
 
 | Key | Accepted values | Default |
@@ -49,6 +53,7 @@ rules:
 | `rules` | Mapping of built-in rule IDs to option mappings | No overrides |
 | `rules.<id>.enabled` | YAML Boolean | `true` |
 | `rules.<id>.severity` | `info`, `warning`, `error` | Rule default |
+| `rules.minimum-saved-version.minimum-version` | Quoted `major.minor` string | `'20.0'` |
 
 Fields may be omitted. An omitted rule remains enabled; `rules: {}` does not
 disable built-ins. An empty options mapping also retains defaults. Use `{}`
@@ -57,8 +62,8 @@ for a configuration with no overrides.
 Unknown rule IDs, unknown options, duplicate keys, unsupported schema versions,
 invalid YAML, and invalid option values are errors. WireLint reports the
 configuration path and exits with status 2 before scanning. This version
-supports a single YAML document; custom scripts and rule-specific options are
-not supported.
+supports a single YAML document; custom scripts are not supported. Rule-specific
+options are accepted only for the rule that defines them.
 
 ## Folder exclusions
 

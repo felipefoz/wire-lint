@@ -26,7 +26,7 @@ pub struct Cli {
 enum Command {
     /// Discover LabVIEW files and run enabled analysis rules.
     #[command(
-        long_about = "Recursively analyze .vi, .vit, .vim, .ctl, .lvproj, .lvclass, and .lvlib files (case-insensitive). Skip .llb archives and symbolic links below the root. All built-in rules are enabled by default. Show summary totals and elapsed scan time by default; use --verbose for individual findings, without listing every discovered path. Elapsed time covers discovery and analysis, excluding configuration loading and final report rendering. Analysis errors always include file details. Exit status: 0 = success, 1 = threshold reached, 2 = configuration, I/O, or analysis error. Unsupported binary formats are errors, never passing checks."
+        long_about = "Recursively analyze .vi, .vit, .vim, .ctl, .lvproj, .lvclass, and .lvlib files (case-insensitive). Skip .llb archives and symbolic links below the root. All built-in rules are enabled by default, including a minimum saved LabVIEW version of 20.0 (configurable in YAML). Show summary totals and elapsed scan time by default; use --verbose for individual findings, without listing every discovered path. Elapsed time covers discovery and analysis, excluding configuration loading and final report rendering. Analysis errors always include file details. Exit status: 0 = success, 1 = threshold reached, 2 = configuration, I/O, or analysis error. Unsupported binary formats are errors, never passing checks."
     )]
     Scan {
         /// Folder to scan.
@@ -216,6 +216,7 @@ mod tests {
             "summary totals and elapsed scan time by default",
             "excluding configuration loading and final report rendering",
             "Analysis errors always include file details",
+            "minimum saved LabVIEW version of 20.0",
         ] {
             assert!(help.contains(expected), "{expected}: {help}");
         }
@@ -237,7 +238,7 @@ mod tests {
                 path: PathBuf::from("private-path.vi"),
                 rule,
                 severity,
-                message: "Individual detail",
+                message: "Individual detail".to_owned(),
             })
             .collect(),
             errors: Vec::new(),

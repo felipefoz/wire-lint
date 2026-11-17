@@ -12,7 +12,7 @@ pub struct Finding {
     pub path: PathBuf,
     pub rule: &'static str,
     pub severity: Severity,
-    pub message: &'static str,
+    pub message: String,
 }
 
 /// A file that could not be analyzed; never represented as a passing check.
@@ -64,6 +64,7 @@ pub fn analyze(root: &Path, files: &[PathBuf], config: &Config) -> Report {
                     options
                         .and_then(|options| options.severity)
                         .unwrap_or_else(|| rule.default_severity()),
+                    options,
                 ))
             }
         })
@@ -72,13 +73,17 @@ pub fn analyze(root: &Path, files: &[PathBuf], config: &Config) -> Report {
     if active.is_empty() {
         return report;
     }
+    let read_version = active
+        .iter()
+        .any(|(rule, _, _)| rule.id() == "minimum-saved-version");
     for path in files {
-        let result = fs::read(root.join(path)).and_then(|bytes| formats::read_facts(path, &bytes));
+        let result = fs::read(root.join(path))
+            .and_then(|bytes| formats::read_facts(path, &bytes, read_version));
         match result {
             Ok(facts) => {
                 report.analyzed += 1;
-                for (rule, severity) in &active {
-                    if let Some(message) = rule.check(&facts) {
+                for (rule, severity, options) in &active {
+                    if let Some(message) = rule.check(&facts, *options) {
                         report.findings.push(Finding {
                             path: path.clone(),
                             rule: rule.id(),

@@ -1,5 +1,6 @@
 //! Strict, explicit YAML configuration for built-in rules.
 
+use crate::formats::Version;
 use crate::rules::{BUILT_INS, Severity};
 use clap::ValueEnum;
 use serde::Deserialize;
@@ -29,13 +30,30 @@ impl FailOn {
     }
 }
 
-/// A rule's common options; new rule-specific options need a typed schema.
+/// Common options and validated options for individual built-in rules.
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct RuleConfig {
     #[serde(default = "enabled")]
     pub enabled: bool,
     pub severity: Option<Severity>,
+    #[serde(default, deserialize_with = "minimum_version")]
+    pub minimum_version: Option<Version>,
+}
+
+/// Accepts only a quoted major.minor string, avoiding YAML number coercion.
+fn minimum_version<'de, D>(deserializer: D) -> Result<Option<Version>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match serde_yaml_ng::Value::deserialize(deserializer)? {
+        serde_yaml_ng::Value::String(value) => Version::parse(&value).map(Some).ok_or_else(|| {
+            serde::de::Error::custom("minimum-version must be a major.minor string")
+        }),
+        _ => Err(serde::de::Error::custom(
+            "minimum-version must be a quoted major.minor string",
+        )),
+    }
 }
 
 /// Omitted enablement leaves a built-in rule active.
@@ -155,11 +173,17 @@ impl Config {
                 ));
             }
         }
-        for id in config.rules.keys() {
+        for (id, options) in &config.rules {
             if !BUILT_INS.iter().any(|rule| rule.id() == id) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("unknown rule '{id}'"),
+                ));
+            }
+            if id != "minimum-saved-version" && options.minimum_version.is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("minimum-version is not supported by rule '{id}'"),
                 ));
             }
         }
@@ -188,6 +212,10 @@ mod tests {
                 rule.id()
             );
         }
+        assert_eq!(
+            config.rules["minimum-saved-version"].minimum_version,
+            Some(crate::rules::DEFAULT_MINIMUM_VERSION)
+        );
     }
 
     #[test]
@@ -277,5 +305,34 @@ mod tests {
             );
             assert!(!FailOn::None.exceeded_by(severity));
         }
+    }
+
+    #[test]
+    fn validates_rule_specific_minimum_version() {
+        let config =
+            Config::parse("rules:\n  minimum-saved-version:\n    minimum-version: '21.3'\n")
+                .unwrap();
+        assert_eq!(
+            config.rules["minimum-saved-version"].minimum_version,
+            Some(Version {
+                major: 21,
+                minor: 3
+            })
+        );
+        for value in [
+            "20.0", "null", "'20'", "'20.10'", "'100.0'", "'20.0.1'", "'-1.0'",
+        ] {
+            assert!(
+                Config::parse(&format!(
+                    "rules:\n  minimum-saved-version:\n    minimum-version: {value}\n"
+                ))
+                .is_err(),
+                "{value}"
+            );
+        }
+        assert!(
+            Config::parse("rules:\n  separate-compiled-code:\n    minimum-version: '20.0'\n")
+                .is_err()
+        );
     }
 }

@@ -101,6 +101,33 @@ wrong root elements, duplicate owner properties, wrong property types, and
 invalid Boolean values are errors. The reader extracts this setting only; it
 does not validate the contents of every unrelated RSRC resource.
 
+## `minimum-saved-version`
+
+Requires each file's saved LabVIEW major.minor release to be at least the
+configured minimum. It defaults to `20.0` and reports a `warning`. It applies
+to `.vi`, `.vit`, `.vim`, `.ctl`, `.lvproj`, `.lvclass`, and `.lvlib`.
+
+```yaml
+rules:
+  minimum-saved-version:
+    enabled: true
+    severity: warning
+    minimum-version: '20.0'
+```
+
+Quote `minimum-version`: it must be a major.minor string, with a major from
+0 to 99 and a minor from 0 to 9. Comparison is numeric, not decimal or
+lexicographic. Patch, build, and prerelease stage are ignored. The check is
+for a minimum, not a guarantee that an older LabVIEW can open a newer file.
+
+For VI-family files, the version word is at offset 0 in the `LVSR` save-record
+payload. For XML files, the root's `LVVersion` attribute encodes the same
+version word as hexadecimal, potentially without leading zeroes. The first
+three version digits encode the major and minor release. A missing or
+malformed version is an analysis error while this rule is enabled; disabling
+the rule skips version validation. Each file is checked independently, not
+against its owning project, library, or class.
+
 ## Adding a built-in rule
 
 The [rule architecture decision](../decisions/0006-rule-runner-and-source-only-check.md)
@@ -115,6 +142,5 @@ describes the extension contract:
 4. Add focused Rust tests and document the rule here, including defaults,
    applicable types, options, limitations, and remediation.
 
-Common configuration needs no factory. If a later rule needs additional
-options, add a typed, validated rule-specific schema before constructing it;
-do not accept arbitrary options or silently ignore unknown keys.
+Rule-specific options must be typed and validated; do not accept arbitrary
+options or silently ignore unknown keys.

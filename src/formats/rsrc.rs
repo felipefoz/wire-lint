@@ -1,16 +1,16 @@
-//! Minimal bounded RSRC format-3 reader for the LVSR source-only flag.
+//! Minimal bounded RSRC format-3 reader for LVSR source-only and version facts.
 //!
 //! Offsets and bit semantics were researched using pylabview; see
 //! THIRD_PARTY_NOTICES.md. No compiled-code blocks are interpreted or executed.
 
-use super::invalid;
+use super::{FileFacts, Version, invalid};
 use std::io;
 
-/// Extracts bit 10 of LVSR's big-endian `viFlags2` at payload offset 8.
+/// Extracts the optional version and bit 10 of `viFlags2` from LVSR.
 ///
 /// Only format 3, LBVW-created VI/control resources with one LVSR section are
 /// supported. Missing, ambiguous, or out-of-bounds records return an error.
-pub(super) fn separate_compiled_code(bytes: &[u8]) -> io::Result<bool> {
+pub(super) fn read_facts(bytes: &[u8], read_version: bool) -> io::Result<FileFacts> {
     let first_header = slice(bytes, 0, 32)?;
     let mut header_offset = 0;
     let header = loop {
@@ -62,12 +62,12 @@ pub(super) fn separate_compiled_code(bytes: &[u8]) -> io::Result<bool> {
         .ok_or_else(|| invalid("RSRC block table size overflow"))?;
     slice(table, 0, table_size)?;
 
-    let mut flag = None;
+    let mut facts = None;
     for block in table[4..table_size].as_chunks::<12>().0 {
         if &block[..4] != b"LVSR" {
             continue;
         }
-        if flag.is_some() || number(block, 4)? != 0 {
+        if facts.is_some() || number(block, 4)? != 0 {
             return Err(invalid("expected exactly one LVSR block and section"));
         }
         let section_offset = number(block, 8)?;
@@ -88,9 +88,17 @@ pub(super) fn separate_compiled_code(bytes: &[u8]) -> io::Result<bool> {
         if payload.len() < 68 {
             return Err(invalid("truncated LVSR save record"));
         }
-        flag = Some(number(payload, 8)? & (1 << 10) != 0);
+        facts = Some(FileFacts {
+            separate_compiled_code: number(payload, 8)? & (1 << 10) != 0,
+            saved_version: if read_version {
+                let word = u32::from_be_bytes(payload[0..4].try_into().unwrap());
+                Some(Version::from_word(word)?)
+            } else {
+                None
+            },
+        });
     }
-    flag.ok_or_else(|| invalid("missing LVSR save record"))
+    facts.ok_or_else(|| invalid("missing LVSR save record"))
 }
 
 /// Returns a bounded byte range, rejecting overflow and truncated resources.
@@ -151,7 +159,9 @@ mod tests {
     fn reads_the_flag_not_the_presence_of_compiled_blocks() {
         for flags in [0, 1 << 9, 1 << 10, u32::MAX] {
             assert_eq!(
-                separate_compiled_code(&fixture(flags)).unwrap(),
+                read_facts(&fixture(flags), true)
+                    .unwrap()
+                    .separate_compiled_code,
                 flags & (1 << 10) != 0
             );
         }
@@ -160,6 +170,7 @@ mod tests {
                 super::super::read_facts(
                     std::path::Path::new(&format!("file.{extension}")),
                     &fixture(1 << 10),
+                    true,
                 )
                 .unwrap()
                 .separate_compiled_code
@@ -174,7 +185,7 @@ mod tests {
             for offset in [8, 104 + 8] {
                 bytes[offset..offset + 4].copy_from_slice(kind);
             }
-            assert!(separate_compiled_code(&bytes).unwrap());
+            assert!(read_facts(&bytes, true).unwrap().separate_compiled_code);
         }
     }
 
@@ -182,7 +193,7 @@ mod tests {
     fn rejects_every_truncated_prefix_without_panicking() {
         let bytes = fixture(1 << 10);
         for length in 0..bytes.len() {
-            assert!(separate_compiled_code(&bytes[..length]).is_err());
+            assert!(read_facts(&bytes[..length], true).is_err());
         }
     }
 
@@ -209,10 +220,48 @@ mod tests {
         ] {
             let mut bytes = original.clone();
             put(&mut bytes, offset, value);
-            assert!(separate_compiled_code(&bytes).is_err(), "offset {offset}");
+            assert!(read_facts(&bytes, true).is_err(), "offset {offset}");
         }
         let mut unsupported = original;
         unsupported[7] = 2;
-        assert!(separate_compiled_code(&unsupported).is_err());
+        assert!(read_facts(&unsupported, true).is_err());
+    }
+
+    #[test]
+    fn reads_version_digits_from_the_save_record() {
+        for (word, expected) in [
+            (
+                0x19008000,
+                Version {
+                    major: 19,
+                    minor: 0,
+                },
+            ),
+            (
+                0x20008000,
+                Version {
+                    major: 20,
+                    minor: 0,
+                },
+            ),
+            (
+                0x21318000,
+                Version {
+                    major: 21,
+                    minor: 3,
+                },
+            ),
+        ] {
+            let mut bytes = fixture(0);
+            put(&mut bytes, 36, word);
+            assert_eq!(
+                read_facts(&bytes, true).unwrap().saved_version,
+                Some(expected)
+            );
+        }
+        let mut bytes = fixture(0);
+        put(&mut bytes, 36, 0x2a008000);
+        assert!(read_facts(&bytes, true).is_err());
+        assert!(read_facts(&bytes, false).is_ok());
     }
 }
