@@ -2,11 +2,13 @@
 
 use crate::analysis;
 use crate::config::{Config, FailOn};
-use crate::rules::BUILT_INS;
+use crate::rules::{BUILT_INS, Severity};
 use crate::scan;
 use clap::{Parser, Subcommand};
+use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -24,7 +26,7 @@ pub struct Cli {
 enum Command {
     /// Discover LabVIEW files and run enabled analysis rules.
     #[command(
-        long_about = "Recursively analyze .vi, .vit, .vim, .ctl, .lvproj, .lvclass, and .lvlib files (case-insensitive). Skip .llb archives and symbolic links below the root. All built-in rules are enabled by default. Report the file count, findings, and summary without listing every discovered path. Exit status: 0 = success, 1 = threshold reached, 2 = configuration, I/O, or analysis error. Unsupported binary formats are errors, never passing checks."
+        long_about = "Recursively analyze .vi, .vit, .vim, .ctl, .lvproj, .lvclass, and .lvlib files (case-insensitive). Skip .llb archives and symbolic links below the root. All built-in rules are enabled by default. Show summary totals and elapsed scan time by default; use --verbose for individual findings, without listing every discovered path. Elapsed time covers discovery and analysis, excluding configuration loading and final report rendering. Analysis errors always include file details. Exit status: 0 = success, 1 = threshold reached, 2 = configuration, I/O, or analysis error. Unsupported binary formats are errors, never passing checks."
     )]
     Scan {
         /// Folder to scan.
@@ -36,6 +38,9 @@ enum Command {
         /// Failure threshold; overrides YAML (default: error). 'none' still fails on analysis errors.
         #[arg(long, value_enum)]
         fail_on: Option<FailOn>,
+        /// Print individual findings in addition to summary totals.
+        #[arg(short, long)]
+        verbose: bool,
     },
     /// List built-in rule IDs, descriptions, and default severities.
     Rules,
@@ -60,6 +65,7 @@ pub fn run(cli: Cli, output: &mut impl Write, errors: &mut impl Write) -> io::Re
             folder,
             config,
             fail_on,
+            verbose,
         } => {
             let config = config
                 .as_deref()
@@ -67,6 +73,7 @@ pub fn run(cli: Cli, output: &mut impl Write, errors: &mut impl Write) -> io::Re
                 .transpose()?
                 .unwrap_or_default();
             let fail_on = fail_on.unwrap_or(config.fail_on);
+            let started = Instant::now();
             let files = scan::discover_files(&folder, &config.exclude_folders)?;
             if files.is_empty() {
                 writeln!(output, "No supported LabVIEW files found.")?;
@@ -79,15 +86,18 @@ pub fn run(cli: Cli, output: &mut impl Write, errors: &mut impl Write) -> io::Re
             }
             output.flush()?;
             let report = analysis::analyze(&folder, &files, &config);
-            for finding in &report.findings {
-                writeln!(
-                    output,
-                    "{}: {} [{}]: {}",
-                    finding.path.display(),
-                    finding.severity,
-                    finding.rule,
-                    finding.message
-                )?;
+            let elapsed = started.elapsed();
+            if verbose {
+                for finding in &report.findings {
+                    writeln!(
+                        output,
+                        "{}: {} [{}]: {}",
+                        finding.path.display(),
+                        finding.severity,
+                        finding.rule,
+                        finding.message
+                    )?;
+                }
             }
             for error in &report.errors {
                 writeln!(
@@ -97,16 +107,55 @@ pub fn run(cli: Cli, output: &mut impl Write, errors: &mut impl Write) -> io::Re
                     error.message
                 )?;
             }
-            writeln!(
-                output,
-                "Analyzed {} file(s); {} finding(s); {} analysis error(s).",
-                report.analyzed,
-                report.findings.len(),
-                report.errors.len()
-            )?;
+            write_summary(&report, elapsed, output)?;
             Ok(report.exit_status(fail_on))
         }
     }
+}
+
+/// Writes totals and elapsed scan time without individual file paths.
+///
+/// Omits empty breakdowns and sorts rule IDs independently of finding order.
+/// Analysis errors are counted separately from finding severities. The caller
+/// supplies the scan duration, excluding report rendering. Propagates output errors.
+fn write_summary(
+    report: &analysis::Report,
+    elapsed: Duration,
+    output: &mut impl Write,
+) -> io::Result<()> {
+    writeln!(
+        output,
+        "Analyzed {} file(s); {} finding(s); {} analysis error(s).",
+        report.analyzed,
+        report.findings.len(),
+        report.errors.len()
+    )?;
+    writeln!(output, "Elapsed scan time: {:.3} s.", elapsed.as_secs_f64())?;
+    if report.findings.is_empty() {
+        return Ok(());
+    }
+
+    let mut info = 0_usize;
+    let mut warning = 0_usize;
+    let mut error = 0_usize;
+    let mut rules = BTreeMap::new();
+    for finding in &report.findings {
+        match finding.severity {
+            Severity::Info => info += 1,
+            Severity::Warning => warning += 1,
+            Severity::Error => error += 1,
+        }
+        *rules.entry(finding.rule).or_insert(0_usize) += 1;
+    }
+    writeln!(
+        output,
+        "Findings by severity: {info} info; {warning} warning; {error} error."
+    )?;
+    writeln!(output, "Findings by rule:")?;
+    for (rule, count) in rules {
+        writeln!(output, "  {rule}: {count} finding(s).")?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -124,12 +173,25 @@ mod tests {
             "checks.yaml",
             "--fail-on",
             "warning",
+            "--verbose",
         ])
         .unwrap();
         assert!(
-            matches!(cli.command, Command::Scan { folder, config: Some(config), fail_on: Some(FailOn::Warning) }
+            matches!(cli.command, Command::Scan { folder, config: Some(config), fail_on: Some(FailOn::Warning), verbose: true }
             if folder == std::path::Path::new("project") && config == std::path::Path::new("checks.yaml"))
         );
+        assert!(matches!(
+            Cli::try_parse_from(["wirelint", "scan", "project"])
+                .unwrap()
+                .command,
+            Command::Scan { verbose: false, .. }
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["wirelint", "scan", "project", "-v"])
+                .unwrap()
+                .command,
+            Command::Scan { verbose: true, .. }
+        ));
         assert!(Cli::try_parse_from(["wirelint", "scan", ".", "--fail-on", "info"]).is_err());
     }
 
@@ -150,8 +212,74 @@ mod tests {
             "symbolic links",
             "without listing every discovered path",
             "exclude-folders",
+            "--verbose",
+            "summary totals and elapsed scan time by default",
+            "excluding configuration loading and final report rendering",
+            "Analysis errors always include file details",
         ] {
             assert!(help.contains(expected), "{expected}: {help}");
         }
+    }
+
+    #[test]
+    fn summary_counts_severities_and_rules_without_individual_paths() {
+        let report = analysis::Report {
+            analyzed: 3,
+            findings: [
+                ("z-rule", Severity::Warning),
+                ("a-rule", Severity::Error),
+                ("z-rule", Severity::Warning),
+                ("a-rule", Severity::Info),
+                ("z-rule", Severity::Error),
+            ]
+            .into_iter()
+            .map(|(rule, severity)| analysis::Finding {
+                path: PathBuf::from("private-path.vi"),
+                rule,
+                severity,
+                message: "Individual detail",
+            })
+            .collect(),
+            errors: Vec::new(),
+        };
+        let mut output = Vec::new();
+        write_summary(&report, Duration::from_millis(1234), &mut output).unwrap();
+        assert_eq!(
+            String::from_utf8(output)
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            [
+                "Analyzed 3 file(s); 5 finding(s); 0 analysis error(s).",
+                "Elapsed scan time: 1.234 s.",
+                "Findings by severity: 1 info; 2 warning; 2 error.",
+                "Findings by rule:",
+                "  a-rule: 2 finding(s).",
+                "  z-rule: 3 finding(s).",
+            ]
+        );
+    }
+
+    #[test]
+    fn summary_omits_empty_breakdowns_and_keeps_analysis_errors_separate() {
+        let report = analysis::Report {
+            errors: vec![analysis::AnalysisError {
+                path: PathBuf::from("broken.vi"),
+                message: "Cannot parse".to_owned(),
+            }],
+            ..analysis::Report::default()
+        };
+        let mut output = Vec::new();
+        write_summary(&report, Duration::ZERO, &mut output).unwrap();
+        assert_eq!(
+            String::from_utf8(output)
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            [
+                "Analyzed 0 file(s); 0 finding(s); 1 analysis error(s).",
+                "Elapsed scan time: 0.000 s.",
+            ]
+        );
     }
 }

@@ -18,9 +18,12 @@ The discovery listing was retained by
   and existing failure thresholds. This supersedes the candidate-listing
   behavior in decisions 0004 and 0006.
 - Record global, application-wide diagnostic logging as future work. It should
-  provide a place for discovered paths and analysis diagnostics without adding
-  those details to normal terminal output. Log levels, destinations, and
-  configuration remain to be designed; no logging options are implemented now.
+  provide a place for discovered paths, per-file and per-rule elapsed timings,
+  and other analysis diagnostics without adding those details to normal
+  terminal output. Log levels, destinations, and configuration remain to be
+  designed; no logging options or per-file/per-rule timers are implemented now.
+  The total scan timer and finding verbosity are covered by
+  [decision 0009](0009-summary-verbosity-and-scan-timing.md).
 
 ## Alternatives and consequences
 

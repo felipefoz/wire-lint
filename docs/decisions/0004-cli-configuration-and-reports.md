@@ -28,4 +28,6 @@ WireLint needs a command-line interface that scans a LabVIEW project folder, run
   [decision 0008](0008-folder-exclusions.md). General path/glob exclusions,
   command-line exclusions, list-file format, and precedence remain deferred.
 - Rule-specific options beyond common enablement and severity.
+- Default terminal summaries, finding verbosity, and elapsed scan time are
+  resolved in [decision 0009](0009-summary-verbosity-and-scan-timing.md).
 - Mapping internal severities to report fields, exact report fields, and output-file behavior.

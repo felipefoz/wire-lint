@@ -114,6 +114,8 @@ controls whether those findings fail the scan:
 
 Info findings do not fail any available threshold. Configuration, discovery,
 file-read, and format errors always fail, independently of this threshold.
+The default summary and `--verbose` mode count the same findings and use the
+same threshold; verbosity is a CLI presentation option, not a YAML setting.
 
 The command-line threshold overrides YAML:
 

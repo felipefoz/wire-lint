@@ -77,18 +77,20 @@ option to require embedded compiled code.
 
 ### Findings and analysis errors
 
-Example finding:
+Findings contribute to the default summary totals. Use `--verbose` to show
+individual findings, for example:
 
 ```text
 Example.vi: warning [separate-compiled-code]: Enable separate compiled code from source (source-only setting).
 ```
 
-A warning is reported but does not fail the default `error` threshold. Use
+A warning is counted but does not fail the default `error` threshold. Use
 `--fail-on warning` or configure severity `error` when separation must gate CI.
 
 Malformed input is an **analysis error**, not a disabled setting or a passing
-check. Errors are written to stderr with the file path; other files are still
-analyzed. Analysis errors always cause exit status 2, even with `--fail-on none`.
+check. Errors are written to stderr with the file path in both output modes;
+other files are still analyzed. Analysis errors always cause exit status 2,
+even with `--fail-on none`.
 
 The initial reader supports RSRC format 3, creator `LBVW`, VI/control/template
 types `LVIN`, `LVCC`, `sVIN`, and `sVCC`, with one uncompressed `LVSR` section

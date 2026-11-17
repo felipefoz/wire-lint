@@ -57,6 +57,22 @@ impl Drop for TestDirectory {
     }
 }
 
+/// Checks the variable elapsed-time line and returns the deterministic scan output.
+fn scan_lines_without_timing(stdout: &str) -> Vec<&str> {
+    let lines: Vec<_> = stdout.lines().collect();
+    let timings: Vec<_> = lines
+        .iter()
+        .filter_map(|line| line.strip_prefix("Elapsed scan time: "))
+        .collect();
+    assert_eq!(timings.len(), 1, "{stdout}");
+    let seconds: f64 = timings[0].strip_suffix(" s.").unwrap().parse().unwrap();
+    assert!(seconds.is_finite() && seconds >= 0.0, "{stdout}");
+    lines
+        .into_iter()
+        .filter(|line| !line.starts_with("Elapsed scan time: "))
+        .collect()
+}
+
 /// Constructs a minimal format-3 VI with one LVSR save-record section.
 fn vi_with_separation(enabled: bool, kind: &[u8; 4]) -> Vec<u8> {
     let mut bytes = vec![0; 192];
@@ -101,10 +117,11 @@ fn scans_binary_flags_across_the_vi_family_without_modifying_files() {
     for (name, enabled, kind) in cases {
         directory.write(name, vi_with_separation(enabled, kind));
     }
-    let output = directory.scan(&["--fail-on", "warning"]);
+    let output = directory.scan(&["--verbose", "--fail-on", "warning"]);
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8(output.stdout).unwrap();
+    scan_lines_without_timing(&stdout);
     assert!(stdout.contains("Analyzed 4 file(s); 2 finding(s); 0 analysis error(s)."));
     for (name, enabled, kind) in cases {
         assert_eq!(
@@ -133,23 +150,36 @@ fn scans_xml_and_applies_yaml_severity_and_cli_threshold() {
     let output = directory.scan(&[]);
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(output.status.code(), Some(0), "{stdout}");
+    let summary = scan_lines_without_timing(&stdout);
     assert_eq!(
-        stdout.lines().collect::<Vec<_>>(),
+        summary,
         [
             "Found 3 supported LabVIEW file(s). Running enabled rules...",
-            "a.lvproj: warning [separate-compiled-code]: Enable separate compiled code from source (source-only setting).",
-            "c.lvlib: warning [separate-compiled-code]: Enable separate compiled code from source (source-only setting).",
             "Analyzed 3 file(s); 2 finding(s); 0 analysis error(s).",
+            "Findings by severity: 0 info; 2 warning; 0 error.",
+            "Findings by rule:",
+            "  separate-compiled-code: 2 finding(s).",
         ]
     );
-    assert!(stdout.contains("Analyzed 3 file(s); 2 finding(s); 0 analysis error(s)."));
-    assert!(stdout.contains("a.lvproj: warning [separate-compiled-code]"));
-    assert!(!stdout.contains("b.LVCLASS: warning"));
     assert!(output.stderr.is_empty());
-    assert_eq!(
-        directory.scan(&["--fail-on", "warning"]).status.code(),
-        Some(1)
-    );
+    for verbosity in [None, Some("--verbose")] {
+        let mut args = vec!["--fail-on", "warning"];
+        args.extend(verbosity);
+        let output = directory.scan(&args);
+        assert_eq!(output.status.code(), Some(1));
+        if verbosity.is_some() {
+            let verbose = String::from_utf8(output.stdout).unwrap();
+            assert!(verbose.contains("a.lvproj: warning [separate-compiled-code]"));
+            assert!(verbose.contains("c.lvlib: warning [separate-compiled-code]"));
+            assert!(!verbose.contains("b.LVCLASS"));
+            assert!(scan_lines_without_timing(&verbose).ends_with(&summary[1..]));
+        } else {
+            assert_eq!(
+                scan_lines_without_timing(&String::from_utf8(output.stdout).unwrap()),
+                summary
+            );
+        }
+    }
 
     let config = directory.write(
         "checks.yaml",
@@ -159,13 +189,37 @@ fn scans_xml_and_applies_yaml_severity_and_cli_threshold() {
         directory.configured_scan(&config, &[]).status.code(),
         Some(0)
     );
-    let output = directory.configured_scan(&config, &["--fail-on", "error"]);
-    assert_eq!(output.status.code(), Some(1));
-    assert!(
-        String::from_utf8(output.stdout)
-            .unwrap()
-            .contains("a.lvproj: error [separate-compiled-code]")
-    );
+    for args in [
+        vec!["--fail-on", "error"],
+        vec!["--fail-on", "error", "--verbose"],
+    ] {
+        let output = directory.configured_scan(&config, &args);
+        assert_eq!(output.status.code(), Some(1));
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("Findings by severity: 0 info; 0 warning; 2 error."));
+        assert_eq!(
+            stdout.contains("a.lvproj: error [separate-compiled-code]"),
+            args.contains(&"--verbose")
+        );
+    }
+
+    fs::write(
+        &config,
+        "rules:\n  separate-compiled-code:\n    severity: info\n",
+    )
+    .unwrap();
+    for args in [
+        vec!["--fail-on", "warning"],
+        vec!["--fail-on", "warning", "--verbose"],
+    ] {
+        let output = directory.configured_scan(&config, &args);
+        assert_eq!(output.status.code(), Some(0));
+        assert!(
+            String::from_utf8(output.stdout)
+                .unwrap()
+                .contains("Findings by severity: 2 info; 0 warning; 0 error.")
+        );
+    }
 }
 
 #[test]
@@ -178,10 +232,20 @@ fn analysis_errors_are_explicit_and_do_not_stop_other_files() {
     assert_eq!(output.status.code(), Some(2));
     let stdout = String::from_utf8(output.stdout).unwrap();
     let stderr = String::from_utf8(output.stderr).unwrap();
+    scan_lines_without_timing(&stdout);
     assert!(stderr.contains("a.vi: analysis error:"));
     assert!(stderr.contains("c.lvlib: analysis error:"));
-    assert!(stdout.contains("b.lvproj: warning [separate-compiled-code]"));
+    assert!(!stdout.contains("b.lvproj"));
     assert!(stdout.contains("Analyzed 1 file(s); 1 finding(s); 2 analysis error(s)."));
+    assert!(stdout.contains("Findings by severity: 0 info; 1 warning; 0 error."));
+    let verbose = directory.scan(&["--verbose", "--fail-on", "none"]);
+    assert_eq!(verbose.status.code(), Some(2));
+    assert_eq!(String::from_utf8(verbose.stderr).unwrap(), stderr);
+    assert!(
+        String::from_utf8(verbose.stdout)
+            .unwrap()
+            .contains("b.lvproj: warning [separate-compiled-code]")
+    );
 }
 
 #[test]
@@ -195,11 +259,36 @@ fn disabling_the_only_rule_skips_parsing() {
     let output = directory.configured_scan(&config, &[]);
     assert_eq!(output.status.code(), Some(0));
     assert!(output.stderr.is_empty());
-    assert!(
-        String::from_utf8(output.stdout)
-            .unwrap()
-            .contains("Analyzed 0 file(s); 0 finding(s); 0 analysis error(s).")
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        scan_lines_without_timing(&stdout),
+        [
+            "Found 1 supported LabVIEW file(s). Running enabled rules...",
+            "Analyzed 0 file(s); 0 finding(s); 0 analysis error(s).",
+        ]
     );
+}
+
+#[test]
+fn passing_scan_omits_empty_breakdowns_in_both_modes() {
+    let directory = TestDirectory::new();
+    directory.write(
+        "passing.lvproj",
+        r#"<Project><Property Name="NI.LV.All.SourceOnly" Type="Bool">true</Property></Project>"#,
+    );
+    for args in [vec![], vec!["--verbose"]] {
+        let output = directory.scan(&args);
+        assert_eq!(output.status.code(), Some(0));
+        assert!(output.stderr.is_empty());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert_eq!(
+            scan_lines_without_timing(&stdout),
+            [
+                "Found 1 supported LabVIEW file(s). Running enabled rules...",
+                "Analyzed 1 file(s); 0 finding(s); 0 analysis error(s).",
+            ]
+        );
+    }
 }
 
 #[test]
@@ -233,7 +322,7 @@ fn template_excludes_git_and_labview_environments_before_analysis() {
     let template = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("docs")
         .join("wirelint.example.yaml");
-    let output = directory.configured_scan(&template, &[]);
+    let output = directory.configured_scan(&template, &["--verbose"]);
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(output.status.code(), Some(0), "{stdout}");
     assert!(output.stderr.is_empty());
@@ -301,11 +390,17 @@ fn lists_rules_and_handles_an_empty_folder() {
             .contains("separate-compiled-code [warning]")
     );
     let directory = TestDirectory::new();
-    let output = directory.scan(&[]);
-    assert!(output.status.success());
-    assert!(
-        String::from_utf8(output.stdout)
-            .unwrap()
-            .contains("No supported LabVIEW files found.")
-    );
+    for args in [vec![], vec!["--verbose"]] {
+        let output = directory.scan(&args);
+        assert!(output.status.success());
+        assert!(output.stderr.is_empty());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert_eq!(
+            scan_lines_without_timing(&stdout),
+            [
+                "No supported LabVIEW files found.",
+                "Analyzed 0 file(s); 0 finding(s); 0 analysis error(s).",
+            ]
+        );
+    }
 }
