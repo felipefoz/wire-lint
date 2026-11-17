@@ -12,7 +12,10 @@ Or, after building or installing the executable:
 wirelint scan path/to/labview/project
 ```
 
-The scan command recursively searches the specified folder and prints supported file paths relative to that folder, in sorted order. Extension matching is case-insensitive.
+The scan command recursively searches the specified folder, prints supported
+file paths relative to that folder in sorted order, and runs enabled built-in
+analysis rules. Extension matching is case-insensitive. Files are read without
+launching LabVIEW or modifying source files.
 
 The initial candidate extensions are:
 
@@ -24,6 +27,45 @@ The initial candidate extensions are:
 - `.lvclass`
 - `.lvlib`
 
-`.llb` archives are not included. Symbolic links encountered below the scan root are skipped. The scanner identifies candidates by extension only; it does not inspect file contents, run analysis rules, load configuration, or produce reports yet.
+`.llb` archives are not included. Symbolic links encountered below the scan root
+are skipped. Discovery uses extensions; the format readers then inspect file
+contents for analysis.
 
-The scan folder must exist and be a directory. Filesystem errors are reported and return a nonzero exit status. A folder with no matching files prints a message and exits successfully.
+## Rules and configuration
+
+```text
+wirelint rules
+wirelint scan path/to/project --config checks.yaml
+wirelint scan path/to/project --fail-on warning
+```
+
+All built-in rules are enabled by default, with their default severities. The
+first rule checks that compiled code is separate from source. Its default
+severity is `warning`, so findings do not fail the default `error` threshold.
+
+`--config <FILE>` loads an explicit YAML file; there is no automatic discovery.
+`--fail-on <error|warning|none>` overrides the YAML failure threshold. See
+[configuration](configuration.md) and the [rule reference](rules.md).
+
+## Output and exit statuses
+
+The terminal report includes the candidate listing, findings with relative
+paths and rule IDs, and a summary of successfully analyzed files, findings,
+and analysis errors. Files with format/read errors are not counted as analyzed.
+Errors go to stderr, while findings and the summary go to stdout. Other
+files are still analyzed after individual file errors.
+
+| Status | Meaning |
+| --- | --- |
+| `0` | No errors and no findings at or above the configured failure threshold |
+| `1` | Findings meet or exceed the threshold |
+| `2` | Command-line, configuration, discovery, output, or analysis error |
+
+The scan folder must exist and be a directory. A folder with no matching files
+prints a message and a zero-count summary and exits successfully, provided
+configuration and output are valid. Unsupported binary formats are errors,
+not passing checks. `--fail-on none` suppresses finding-based failures only,
+not analysis errors.
+
+Exclusions, GitLab Code Quality, and SARIF output are not implemented yet.
+Use `wirelint --help` and `wirelint scan --help` for CLI help.

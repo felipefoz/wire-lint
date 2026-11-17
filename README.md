@@ -8,10 +8,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and contribution gu
 
 WireLint is licensed under the MIT License. See [LICENSE](LICENSE).
 
-## Quick start
+## Documentation
 
-```text
-cargo run -- scan path/to/labview/project
-```
-
-The scanner lists supported LabVIEW file candidates by extension. See the [CLI guide](docs/user-guide/cli.md).
+- [Getting started and CLI usage](docs/user-guide/cli.md)
+- [Rule configuration](docs/user-guide/configuration.md)
+- [Built-in rules](docs/user-guide/rules.md)
+- [Configuration template](docs/wirelint.example.yaml)

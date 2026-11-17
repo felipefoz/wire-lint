@@ -10,7 +10,8 @@ WireLint is a command-line tool with user-configurable rules, exclusions, and re
 ## Decision
 
 - Keep user-facing documentation in `docs/user-guide/`, separate from `docs/decisions/`.
-- Keep the README concise, with the project overview, a quick start, and links to user documentation.
+- Keep the README concise, with the project overview and links to user documentation.
+- Keep quick-start commands in the CLI guide and link to it from the README so usage examples have one maintained location.
 - Add user-guide pages as the CLI takes shape: getting started, CLI reference, configuration, rules, and reports.
 - Use Clap to define the CLI and derive its `--help` text from those definitions.
 - When CLI options, defaults, configuration, reports, or exit behavior change, update the help text, relevant user documentation, and tests in the same change.

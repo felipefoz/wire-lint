@@ -21,7 +21,9 @@ WireLint needs a command-line interface that scans a LabVIEW project folder, run
 
 ## Open design details
 
-- Configuration filename discovery, schema, and precedence between file and command-line settings.
+- Configuration loading, schema, precedence, rule IDs, and the initial rule
+  defaults are resolved in [decision 0006](0006-rule-runner-and-source-only-check.md).
+  Configuration discovery remains deferred; loading is explicit.
 - Exclusion pattern syntax, path base, list-file format, and precedence.
-- Rule identifiers, default rule set, and per-rule configuration.
+- Rule-specific options beyond common enablement and severity.
 - Mapping internal severities to report fields, exact report fields, and output-file behavior.
