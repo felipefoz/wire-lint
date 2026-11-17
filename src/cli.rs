@@ -30,7 +30,7 @@ enum Command {
         /// Folder to scan.
         #[arg(value_name = "FOLDER")]
         folder: PathBuf,
-        /// Explicit YAML configuration file; no automatic configuration discovery.
+        /// Explicit YAML file for rules and exclude-folders; no automatic discovery.
         #[arg(long, value_name = "FILE")]
         config: Option<PathBuf>,
         /// Failure threshold; overrides YAML (default: error). 'none' still fails on analysis errors.
@@ -67,7 +67,7 @@ pub fn run(cli: Cli, output: &mut impl Write, errors: &mut impl Write) -> io::Re
                 .transpose()?
                 .unwrap_or_default();
             let fail_on = fail_on.unwrap_or(config.fail_on);
-            let files = scan::discover_files(&folder)?;
+            let files = scan::discover_files(&folder, &config.exclude_folders)?;
             if files.is_empty() {
                 writeln!(output, "No supported LabVIEW files found.")?;
             } else {
@@ -149,6 +149,7 @@ mod tests {
             "default: error",
             "symbolic links",
             "without listing every discovered path",
+            "exclude-folders",
         ] {
             assert!(help.contains(expected), "{expected}: {help}");
         }

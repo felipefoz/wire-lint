@@ -51,6 +51,8 @@ pub struct Config {
     version: u32,
     #[serde(default)]
     pub fail_on: FailOn,
+    #[serde(default, deserialize_with = "folder_names")]
+    pub exclude_folders: Vec<String>,
     #[serde(default, deserialize_with = "unique_rules")]
     pub rules: BTreeMap<String, RuleConfig>,
 }
@@ -60,6 +62,7 @@ impl Default for Config {
         Self {
             version: schema_version(),
             fail_on: FailOn::default(),
+            exclude_folders: Vec::new(),
             rules: BTreeMap::new(),
         }
     }
@@ -68,6 +71,22 @@ impl Default for Config {
 /// Current YAML schema version; omitted version selects version 1.
 fn schema_version() -> u32 {
     1
+}
+
+/// Requires string entries without YAML's implicit scalar-to-string coercion.
+fn folder_names<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Vec::<serde_yaml_ng::Value>::deserialize(deserializer)?
+        .into_iter()
+        .map(|value| match value {
+            serde_yaml_ng::Value::String(name) => Ok(name),
+            _ => Err(serde::de::Error::custom(
+                "exclude-folders entries must be strings",
+            )),
+        })
+        .collect()
 }
 
 /// Rejects duplicate rule IDs rather than silently accepting the last value.
@@ -123,6 +142,19 @@ impl Config {
                 "unsupported configuration version; expected 1",
             ));
         }
+        for name in &config.exclude_folders {
+            if name.trim().is_empty()
+                || matches!(name.as_str(), "." | "..")
+                || name.contains(['/', '\\', '\0'])
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "exclude-folders entry {name:?} must be a nonempty folder name, not a path"
+                    ),
+                ));
+            }
+        }
         for id in config.rules.keys() {
             if !BUILT_INS.iter().any(|rule| rule.id() == id) {
                 return Err(io::Error::new(
@@ -162,6 +194,7 @@ mod tests {
     fn loads_defaults_and_explicit_overrides() {
         let defaults = Config::parse("{}").unwrap();
         assert!(defaults.rules.is_empty());
+        assert!(defaults.exclude_folders.is_empty());
         assert_eq!(defaults.fail_on, FailOn::Error);
         let config = Config::parse(
             "version: 1\nfail-on: warning\nrules:\n  separate-compiled-code:\n    enabled: false\n    severity: error\n",
@@ -178,6 +211,37 @@ mod tests {
                 .rules["separate-compiled-code"]
                 .enabled
         );
+    }
+
+    #[test]
+    fn loads_folder_exclusions_and_rejects_paths_or_invalid_names() {
+        let config = Config::parse("exclude-folders:\n  - .git\n  - .lv-venv\n").unwrap();
+        assert_eq!(config.exclude_folders, [".git", ".lv-venv"]);
+        assert!(
+            Config::parse("exclude-folders: []")
+                .unwrap()
+                .exclude_folders
+                .is_empty()
+        );
+        for yaml in [
+            "exclude-folders: .git",
+            "exclude-folders: [null]",
+            "exclude-folders: [true]",
+            "exclude-folders: [123]",
+            "exclude-folders: ['']",
+            "exclude-folders: ['   ']",
+            "exclude-folders: ['.']",
+            "exclude-folders: ['..']",
+            "exclude-folders: ['nested/.git']",
+            r"exclude-folders: ['nested\.git']",
+            "exclude-folders: ['/absolute']",
+            r"exclude-folders: ['C:\absolute']",
+            r#"exclude-folders: ["bad\0name"]"#,
+            "exclude-folders: []\nexclude-folders: []",
+        ] {
+            let error = Config::parse(yaml).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData, "{yaml}");
+        }
     }
 
     #[test]

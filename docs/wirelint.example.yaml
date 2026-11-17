@@ -6,6 +6,11 @@ version: 1
 # or none to report findings without failing. Analysis errors always fail.
 fail-on: error
 
+# Skip folders with these exact names at any depth.
+exclude-folders:
+  - .git
+  - .lv-venv
+
 rules:
   # Require separate compiled code from source for VI-family files and
   # the equivalent new-item setting on projects, libraries, and classes.

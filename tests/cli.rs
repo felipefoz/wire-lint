@@ -203,11 +203,71 @@ fn disabling_the_only_rule_skips_parsing() {
 }
 
 #[test]
+fn template_excludes_git_and_labview_environments_before_analysis() {
+    let directory = TestDirectory::new();
+    let nested = directory.0.join("nested");
+    fs::create_dir(&nested).unwrap();
+    for parent in [&directory.0, &nested] {
+        for name in [".git", ".lv-venv"] {
+            let excluded = parent.join(name).join("deeper");
+            fs::create_dir_all(&excluded).unwrap();
+            fs::write(excluded.join("invalid.vi"), b"not an RSRC file").unwrap();
+        }
+    }
+    fs::create_dir(directory.0.join(".git-backup")).unwrap();
+    directory.write(
+        "root.lvproj",
+        r#"<Project><Property Name="NI.LV.All.SourceOnly" Type="Bool">true</Property></Project>"#,
+    );
+    fs::write(
+        nested.join("nested.lvlib"),
+        r#"<Library><Property Name="NI.LV.All.SourceOnly" Type="Bool">true</Property></Library>"#,
+    )
+    .unwrap();
+    fs::write(
+        directory.0.join(".git-backup").join("kept.lvproj"),
+        "<Project/>",
+    )
+    .unwrap();
+
+    let template = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("docs")
+        .join("wirelint.example.yaml");
+    let output = directory.configured_scan(&template, &[]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(output.status.code(), Some(0), "{stdout}");
+    assert!(output.stderr.is_empty());
+    assert!(stdout.starts_with("Found 3 supported LabVIEW file(s)."));
+    assert!(stdout.contains("Analyzed 3 file(s); 1 finding(s); 0 analysis error(s)."));
+    assert!(stdout.contains(&format!(
+        "{}: warning [separate-compiled-code]",
+        Path::new(".git-backup").join("kept.lvproj").display()
+    )));
+
+    let output = directory.scan(&[]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .starts_with("Found 7 supported LabVIEW file(s).")
+    );
+    assert_eq!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .lines()
+            .filter(|line| line.contains("analysis error:"))
+            .count(),
+        4
+    );
+}
+
+#[test]
 fn invalid_or_missing_configuration_fails_before_scanning() {
     let directory = TestDirectory::new();
     for contents in [
         "rules:\n  unknown-rule: {}",
         "rules:\n  separate-compiled-code:\n    severity: fatal",
+        "exclude-folders: ['nested/.git']",
     ] {
         let config = directory.write("checks.yaml", contents);
         let output = directory.configured_scan(&config, &[]);

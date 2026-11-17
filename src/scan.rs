@@ -1,5 +1,6 @@
 //! Recursive discovery of supported LabVIEW files.
 
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
@@ -9,14 +10,15 @@ const SUPPORTED_EXTENSIONS: &[&str] = &["vi", "vit", "vim", "ctl", "lvproj", "lv
 
 /// Finds supported LabVIEW file candidates under `root`.
 ///
-/// Traversal is recursive, skips symbolic links, and returns paths relative to
-/// `root` in sorted order.
+/// Traversal is recursive, skips symbolic links and excluded child directories,
+/// and returns paths relative to `root` in sorted order. Exclusions match literal
+/// folder names case-sensitively at every depth; the root itself is never excluded.
 ///
 /// # Errors
 ///
 /// Returns an error if `root` is not a directory or any filesystem operation
 /// fails during traversal.
-pub fn discover_files(root: &Path) -> io::Result<Vec<PathBuf>> {
+pub fn discover_files(root: &Path, exclude_folders: &[String]) -> io::Result<Vec<PathBuf>> {
     let metadata = fs::metadata(root)
         .map_err(|error| with_path_context("cannot inspect scan folder", root, error))?;
     if !metadata.is_dir() {
@@ -26,6 +28,7 @@ pub fn discover_files(root: &Path) -> io::Result<Vec<PathBuf>> {
         ));
     }
 
+    let excluded: HashSet<&OsStr> = exclude_folders.iter().map(OsStr::new).collect();
     let mut directories = vec![root.to_path_buf()];
     let mut files = Vec::new();
 
@@ -50,7 +53,9 @@ pub fn discover_files(root: &Path) -> io::Result<Vec<PathBuf>> {
             }
 
             if file_type.is_dir() {
-                directories.push(path);
+                if !excluded.contains(entry.file_name().as_os_str()) {
+                    directories.push(path);
+                }
             } else if file_type.is_file() && has_supported_extension(&path) {
                 let relative_path = path.strip_prefix(root).map_err(|error| {
                     io::Error::new(
@@ -163,7 +168,7 @@ mod tests {
             fs::write(path, []).unwrap();
         }
 
-        let files = discover_files(root.path()).unwrap();
+        let files = discover_files(root.path(), &[]).unwrap();
 
         assert_eq!(
             files,
@@ -185,7 +190,7 @@ mod tests {
         let file = root.path().join("file.vi");
         fs::write(&file, []).unwrap();
 
-        let error = discover_files(&file).unwrap_err();
+        let error = discover_files(&file, &[]).unwrap_err();
 
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         assert!(error.to_string().contains("scan path is not a directory"));
@@ -203,8 +208,57 @@ mod tests {
         symlink(target.path(), root.path().join("linked-directory")).unwrap();
         symlink(&target_file, root.path().join("linked.vi")).unwrap();
 
-        let files = discover_files(root.path()).unwrap();
+        let files = discover_files(root.path(), &[]).unwrap();
 
         assert!(files.is_empty());
+    }
+
+    #[test]
+    fn prunes_excluded_folder_names_at_every_depth_without_matching_prefixes() {
+        let root = TestDirectory::new().unwrap();
+        let nested = root.path().join("nested");
+        fs::create_dir(&nested).unwrap();
+        for parent in [root.path(), nested.as_path()] {
+            for name in [".git", ".lv-venv", ".git-backup", ".lv-venv-backup"] {
+                let directory = parent.join(name).join("deeper");
+                fs::create_dir_all(&directory).unwrap();
+                fs::write(directory.join("file.vi"), []).unwrap();
+            }
+        }
+        let exclusions = vec![".git".to_owned(), ".lv-venv".to_owned()];
+        let files = discover_files(root.path(), &exclusions).unwrap();
+        let mut expected = Vec::new();
+        for prefix in [Path::new(""), Path::new("nested")] {
+            for name in [".git-backup", ".lv-venv-backup"] {
+                expected.push(prefix.join(name).join("deeper").join("file.vi"));
+            }
+        }
+        expected.sort();
+        assert_eq!(files, expected);
+        assert_eq!(discover_files(root.path(), &[]).unwrap().len(), 8);
+    }
+
+    #[test]
+    fn exclusions_are_case_sensitive_and_apply_only_to_child_directories() {
+        let root = TestDirectory::new().unwrap();
+        let excluded_root = root.path().join(".git");
+        fs::create_dir(&excluded_root).unwrap();
+        fs::write(excluded_root.join("root.vi"), []).unwrap();
+        fs::create_dir(excluded_root.join(".GIT")).unwrap();
+        fs::write(excluded_root.join(".GIT").join("upper.vi"), []).unwrap();
+        fs::write(excluded_root.join("excluded.vi"), []).unwrap();
+
+        assert_eq!(
+            discover_files(
+                &excluded_root,
+                &[".git".to_owned(), "excluded.vi".to_owned()]
+            )
+            .unwrap(),
+            vec![
+                PathBuf::from(".GIT").join("upper.vi"),
+                PathBuf::from("excluded.vi"),
+                PathBuf::from("root.vi"),
+            ]
+        );
     }
 }

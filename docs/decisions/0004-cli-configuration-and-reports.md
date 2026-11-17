@@ -24,6 +24,8 @@ WireLint needs a command-line interface that scans a LabVIEW project folder, run
 - Configuration loading, schema, precedence, rule IDs, and the initial rule
   defaults are resolved in [decision 0006](0006-rule-runner-and-source-only-check.md).
   Configuration discovery remains deferred; loading is explicit.
-- Exclusion pattern syntax, path base, list-file format, and precedence.
+- Literal folder exclusions in YAML are resolved in
+  [decision 0008](0008-folder-exclusions.md). General path/glob exclusions,
+  command-line exclusions, list-file format, and precedence remain deferred.
 - Rule-specific options beyond common enablement and severity.
 - Mapping internal severities to report fields, exact report fields, and output-file behavior.

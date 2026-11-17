@@ -29,6 +29,9 @@ The initial candidate extensions are:
 `.llb` archives are not included. Symbolic links encountered below the scan root
 are skipped. Discovery uses extensions; the format readers then inspect file
 contents for analysis.
+YAML `exclude-folders` entries prune matching directories at any depth before
+traversal. The [configuration template](../wirelint.example.yaml) excludes
+`.git` and `.lv-venv`; load it with `--config` to apply those exclusions.
 
 ## Rules and configuration
 
@@ -71,7 +74,8 @@ configuration and output are valid. Unsupported binary formats are errors,
 not passing checks. `--fail-on none` suppresses finding-based failures only,
 not analysis errors.
 
-Exclusions, GitLab Code Quality, and SARIF output are not implemented yet.
+General path/glob exclusions, command-line exclusion options, GitLab Code
+Quality, and SARIF output are not implemented yet.
 Global diagnostic logging, including discovered-path details, is also deferred;
 see the [output and logging decision](../decisions/0007-concise-output-and-future-logging.md).
 Use `wirelint --help` and `wirelint scan --help` for CLI help.
