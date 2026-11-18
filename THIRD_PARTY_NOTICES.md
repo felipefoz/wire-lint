@@ -59,13 +59,21 @@ and [`linkobjs.py`](https://github.com/labview-package-manager/lvpm/blob/master/
 (`LIvi` linker sections and bounded `PTH0` paths). These sources were
 consulted as format descriptions; no implementation code was copied.
 
+Block-diagram bookmark extraction was informed by pylabview's `HeapVerb` in
+[`LVblock.py`](https://github.com/mefistotelis/pylabview/blob/master/pylabview/LVblock.py),
+heap tags in [`LVheap.py`](https://github.com/mefistotelis/pylabview/blob/master/pylabview/LVheap.py),
+and variable-width fields in `LVmisc.py`. The distinction between free labels
+and owned labels was checked against
+[lvkit](https://github.com/pragmatest-dev/lvkit)'s block-diagram parser. These were
+used as format descriptions; no implementation code or fixtures were copied.
+
 pylabview attributes these source files to Mefistotelis and distributes them
 under the MIT License. Refer to its
 [license](https://github.com/mefistotelis/pylabview/blob/master/LICENSE).
 
 ## Rust dependencies
 
-WireLint uses Clap for the CLI, roxmltree for XML parsing, and Serde with
-serde_yaml_ng for typed YAML configuration. Each dependency retains its own
+WireLint uses Clap for the CLI, flate2 for zlib decompression, roxmltree for
+XML parsing, and Serde with serde_yaml_ng for typed YAML configuration. Each dependency retains its own
 license; dependency versions and transitive dependencies are recorded in
 `Cargo.lock`.

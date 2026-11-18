@@ -172,6 +172,7 @@ mod tests {
                 message: "A \"quoted\" message\nwith details.".into(),
             }],
             errors: Vec::new(),
+            skipped: Vec::new(),
         }
     }
 

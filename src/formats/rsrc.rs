@@ -29,6 +29,7 @@ pub(super) fn read_facts_with_password(
     read_password: bool,
 ) -> io::Result<FileFacts> {
     read_facts_with_orphaned_vi(bytes, read_version, read_description, read_password, false)
+        .map(|(facts, _)| facts)
 }
 
 /// Extracts an owning-library path when orphaned-VI analysis is requested.
@@ -38,7 +39,7 @@ pub(super) fn read_facts_with_orphaned_vi(
     read_description: bool,
     read_password: bool,
     read_orphaned_vi: bool,
-) -> io::Result<FileFacts> {
+) -> io::Result<(FileFacts, Vec<Vec<u8>>)> {
     let first_header = slice(bytes, 0, 32)?;
     let mut header_offset = 0;
     let header = loop {
@@ -102,6 +103,8 @@ pub(super) fn read_facts_with_orphaned_vi(
     let mut strg = None;
     let mut li_vi_seen = false;
     let mut linked_library = None;
+    let mut bookmarks = Vec::new();
+    let mut diagram_seen = false;
     for block in table[4..table_size].as_chunks::<12>().0 {
         if &block[..4] == b"LVSR" {
             if separate_compiled_code.is_some() || number(block, 4)? != 0 {
@@ -141,6 +144,22 @@ pub(super) fn read_facts_with_orphaned_vi(
                     saved_version = Some(version);
                 }
             }
+        } else if is_vi && &block[..4] == b"BDHb" {
+            if diagram_seen {
+                return Err(invalid("duplicate BDHb block diagram"));
+            }
+            diagram_seen = true;
+            bookmarks = super::heap::read_bookmarks(
+                table,
+                table_size,
+                data,
+                number(block, 4)?,
+                number(block, 8)?,
+            )?;
+        } else if is_vi && matches!(&block[..4], b"BDHP" | b"BDHc") {
+            return Err(invalid(
+                "unsupported block diagram heap format for bookmark extraction",
+            ));
         } else if read_password && is_vi && &block[..4] == b"BDPW" {
             if bdpw_seen {
                 return Err(invalid("duplicate BDPW password block"));
@@ -189,18 +208,21 @@ pub(super) fn read_facts_with_orphaned_vi(
     } else {
         None
     };
-    Ok(FileFacts {
-        separate_compiled_code,
-        has_description,
-        saved_version,
-        debugging_enabled,
-        has_breakpoints,
-        auto_error_handling,
-        has_password,
-        linked_library,
-        library_members: None,
-        orphaned_vi: None,
-    })
+    Ok((
+        FileFacts {
+            separate_compiled_code,
+            has_description,
+            saved_version,
+            debugging_enabled,
+            has_breakpoints,
+            auto_error_handling,
+            has_password,
+            linked_library,
+            library_members: None,
+            orphaned_vi: None,
+        },
+        bookmarks,
+    ))
 }
 
 /// Reads the owning `.lvlib` path from the VI's `VILB` entry in its `LIvi` table.
@@ -416,7 +438,7 @@ fn read_strg_description(
 }
 
 /// Returns a bounded byte range, rejecting overflow and truncated resources.
-fn slice(bytes: &[u8], offset: usize, length: usize) -> io::Result<&[u8]> {
+pub(super) fn slice(bytes: &[u8], offset: usize, length: usize) -> io::Result<&[u8]> {
     let end = offset
         .checked_add(length)
         .ok_or_else(|| invalid("RSRC range overflow"))?;
@@ -426,7 +448,7 @@ fn slice(bytes: &[u8], offset: usize, length: usize) -> io::Result<&[u8]> {
 }
 
 /// Reads one big-endian unsigned word as a checked host offset.
-fn number(bytes: &[u8], offset: usize) -> io::Result<usize> {
+pub(super) fn number(bytes: &[u8], offset: usize) -> io::Result<usize> {
     let word = slice(bytes, offset, 4)?;
     usize::try_from(u32::from_be_bytes([word[0], word[1], word[2], word[3]]))
         .map_err(|_| invalid("RSRC offset is too large for this platform"))
@@ -821,7 +843,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            facts.linked_library,
+            facts.0.linked_library,
             Some(PathBuf::from("orphaned-example.lvlib"))
         );
         assert_eq!(
@@ -834,6 +856,7 @@ mod tests {
                 true,
             )
             .unwrap()
+            .0
             .linked_library,
             None
         );

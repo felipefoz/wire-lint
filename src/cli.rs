@@ -28,7 +28,7 @@ pub struct Cli {
 enum Command {
     /// Discover LabVIEW files and run enabled analysis rules.
     #[command(
-        long_about = "Recursively analyze .vi, .vit, .vim, .ctl, .lvproj, .lvclass, and .lvlib files (case-insensitive). Skip .llb archives and symbolic links below the root. All built-in rules are enabled by default, including saved-version with a minimum saved LabVIEW version of 20.0 and no maximum. Configure inclusive minimum-version and/or maximum-version bounds in YAML; a maximum-only configuration has no minimum. The debugging-status rule flags VIs with debugging enabled by default; set fail-when: disabled in YAML to reverse the check. The no-breakpoints rule reports VIs saved with block diagram breakpoints as errors by default. Show summary totals and elapsed scan time by default; use --verbose for individual findings, without listing every discovered path. Elapsed time covers discovery and analysis, excluding configuration loading and final report rendering. Analysis errors always include file details. Exit status: 0 = success, 1 = threshold reached, 2 = configuration, I/O, or analysis error. Unsupported binary formats are errors, never passing checks."
+        long_about = "Recursively analyze .vi, .vit, .vim, .ctl, .lvproj, .lvclass, and .lvlib files (case-insensitive). Skip .llb archives and symbolic links below the root. A '#wirelint RULE-ID' directive in a VI block-diagram free label or on a standalone line in an XML file's own description skips that enabled rule for that file and is reported on stdout. Directive lines alone do not satisfy file-description. All built-in rules are enabled by default, including saved-version with a minimum saved LabVIEW version of 20.0 and no maximum. Configure inclusive minimum-version and/or maximum-version bounds in YAML; a maximum-only configuration has no minimum. The debugging-status rule flags VIs with debugging enabled by default; set fail-when: disabled in YAML to reverse the check. The no-breakpoints rule reports VIs saved with block diagram breakpoints as errors by default. Show summary totals and elapsed scan time by default; use --verbose for individual findings, without listing every discovered path. Elapsed time covers discovery and analysis, excluding configuration loading and final report rendering. Analysis errors always include file details. Exit status: 0 = success, 1 = threshold reached, 2 = configuration, I/O, or analysis error. Unsupported binary formats are errors, never passing checks."
     )]
     Scan {
         /// Folder to scan.
@@ -109,6 +109,14 @@ pub fn run(cli: Cli, output: &mut impl Write, errors: &mut impl Write) -> io::Re
                         finding.message
                     )?;
                 }
+            }
+            for skipped in &report.skipped {
+                writeln!(
+                    output,
+                    "{}: skipped [{}] (#wirelint directive)",
+                    skipped.path.display(),
+                    skipped.rule
+                )?;
             }
             for error in &report.errors {
                 writeln!(
@@ -280,6 +288,9 @@ mod tests {
             "Analysis errors always include file details",
             "minimum saved LabVIEW version of 20.0",
             "saved-version",
+            "#wirelint RULE-ID",
+            "XML file's own description",
+            "Directive lines alone do not satisfy file-description",
             "maximum-version",
             "maximum-only configuration has no minimum",
             "debugging-status",
@@ -315,6 +326,7 @@ mod tests {
             })
             .collect(),
             errors: Vec::new(),
+            skipped: Vec::new(),
         };
         let mut output = Vec::new();
         write_summary(&report, Duration::from_millis(1234), &mut output).unwrap();

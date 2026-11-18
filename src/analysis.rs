@@ -23,12 +23,20 @@ pub struct AnalysisError {
     pub message: String,
 }
 
+/// An enabled rule suppressed by a directive in the same file.
+#[derive(Debug)]
+pub struct Skipped {
+    pub path: PathBuf,
+    pub rule: &'static str,
+}
+
 /// Findings and errors accumulated in discovery/registry order.
 #[derive(Debug, Default)]
 pub struct Report {
     pub analyzed: usize,
     pub findings: Vec<Finding>,
     pub errors: Vec<AnalysisError>,
+    pub skipped: Vec<Skipped>,
 }
 
 impl Report {
@@ -97,9 +105,9 @@ pub fn analyze(root: &Path, files: &[PathBuf], config: &Config) -> Report {
             )
         });
         match result {
-            Ok(facts) => {
+            Ok((facts, bookmarks)) => {
                 report.analyzed += 1;
-                analyzed_files.push((path.clone(), facts));
+                analyzed_files.push((path.clone(), facts, bookmarks));
             }
             Err(error) => report.errors.push(AnalysisError {
                 path: path.clone(),
@@ -110,8 +118,18 @@ pub fn analyze(root: &Path, files: &[PathBuf], config: &Config) -> Report {
     if read_orphaned_vi {
         apply_orphaned_vi_facts(&mut analyzed_files);
     }
-    for (path, facts) in analyzed_files {
+    for (path, facts, bookmarks) in analyzed_files {
         for (rule, severity, options) in &active {
+            if bookmarks
+                .iter()
+                .any(|bookmark| suppresses(bookmark, rule.id()))
+            {
+                report.skipped.push(Skipped {
+                    path: path.clone(),
+                    rule: rule.id(),
+                });
+                continue;
+            }
             if let Some(message) = rule.check(&facts, *options) {
                 report.findings.push(Finding {
                     path: path.clone(),
@@ -125,10 +143,15 @@ pub fn analyze(root: &Path, files: &[PathBuf], config: &Config) -> Report {
     report
 }
 
+/// Matches an exact two-token, ASCII rule directive; other bookmarks are inert.
+fn suppresses(bookmark: &[u8], rule: &str) -> bool {
+    formats::directive_rule(bookmark) == Some(rule.as_bytes())
+}
+
 /// Resolves only relative VI/library URLs against files discovered in this scan.
-fn apply_orphaned_vi_facts(files: &mut [(PathBuf, formats::FileFacts)]) {
+fn apply_orphaned_vi_facts(files: &mut [(PathBuf, formats::FileFacts, Vec<Vec<u8>>)]) {
     let mut library_members = HashMap::<PathBuf, HashSet<PathBuf>>::new();
-    for (library_path, facts) in files.iter() {
+    for (library_path, facts, _) in files.iter() {
         let Some(members) = facts.library_members.as_ref() else {
             continue;
         };
@@ -140,7 +163,7 @@ fn apply_orphaned_vi_facts(files: &mut [(PathBuf, formats::FileFacts)]) {
         library_members.insert(library_path.clone(), resolved_members);
     }
 
-    for (vi_path, facts) in files {
+    for (vi_path, facts, _) in files {
         let Some(linked_library) = facts.linked_library.as_deref() else {
             continue;
         };
@@ -179,8 +202,28 @@ fn resolve_scanned_path(base: &Path, path: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_scanned_path;
+    use super::{resolve_scanned_path, suppresses};
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn matches_only_complete_rule_directives() {
+        for (text, expected) in [
+            ("#wirelint file-description", true),
+            ("#wirelint\tfile-description  ", true),
+            (" #wirelint file-description", false),
+            ("#wirelint file-description-extra", false),
+            ("#wirelint file-description extra", false),
+            ("#wirelint no-breakpoints", false),
+            ("#WireLint file-description", false),
+            ("#todo #wirelint file-description", false),
+        ] {
+            assert_eq!(
+                suppresses(text.as_bytes(), "file-description"),
+                expected,
+                "{text}"
+            );
+        }
+    }
 
     #[test]
     fn normalizes_relative_urls_and_rejects_paths_outside_the_scan_root() {

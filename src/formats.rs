@@ -1,5 +1,6 @@
 //! Shared facts and dispatch for native VI/RSRC and XML LabVIEW formats.
 
+mod heap;
 mod rsrc;
 mod xml;
 
@@ -77,6 +78,7 @@ pub struct FileFacts {
 /// Missing XML source-only or description properties mean false. When
 /// `read_version` is true, missing or malformed version metadata is an error.
 /// When `read_password` is true, malformed BDPW metadata is an error.
+/// XML owner descriptions are always validated to extract suppression directives.
 /// Malformed documents and unsupported binary layouts return `InvalidData`,
 /// never an assumed value.
 #[cfg(test)]
@@ -95,9 +97,10 @@ pub fn read_facts(
         read_password,
         false,
     )
+    .map(|(facts, _)| facts)
 }
 
-/// Reads facts and optionally extracts the VI/library relationship metadata.
+/// Reads facts and suppression directives, optionally extracting library links.
 pub fn read_facts_with_orphaned_vi(
     path: &Path,
     bytes: &[u8],
@@ -105,11 +108,11 @@ pub fn read_facts_with_orphaned_vi(
     read_description: bool,
     read_password: bool,
     read_orphaned_vi: bool,
-) -> io::Result<FileFacts> {
+) -> io::Result<(FileFacts, Vec<Vec<u8>>)> {
     let xml = path.extension().and_then(|value| value.to_str());
     match xml {
         Some(extension) if extension.eq_ignore_ascii_case("lvproj") => {
-            xml::read_facts(bytes, "Project", read_version, read_description)
+            xml::read_facts_with_members(bytes, "Project", read_version, read_description, false)
         }
         Some(extension) if extension.eq_ignore_ascii_case("lvlib") => xml::read_facts_with_members(
             bytes,
@@ -119,7 +122,7 @@ pub fn read_facts_with_orphaned_vi(
             read_orphaned_vi,
         ),
         Some(extension) if extension.eq_ignore_ascii_case("lvclass") => {
-            xml::read_facts(bytes, "LVClass", read_version, read_description)
+            xml::read_facts_with_members(bytes, "LVClass", read_version, read_description, false)
         }
         _ => rsrc::read_facts_with_orphaned_vi(
             bytes,
@@ -129,6 +132,23 @@ pub fn read_facts_with_orphaned_vi(
             read_orphaned_vi,
         ),
     }
+}
+
+/// Extracts the rule ID from an exact, case-sensitive two-token directive.
+///
+/// The `#` must be the first byte. Only ASCII whitespace separates tokens.
+pub fn directive_rule(text: &[u8]) -> Option<&[u8]> {
+    if !text.starts_with(b"#") {
+        return None;
+    }
+    let mut tokens = text
+        .split(|byte| byte.is_ascii_whitespace())
+        .filter(|part| !part.is_empty());
+    if tokens.next()? != b"#wirelint" {
+        return None;
+    }
+    let rule = tokens.next()?;
+    tokens.next().is_none().then_some(rule)
 }
 
 /// Creates a contextual format error without substituting a setting value.
@@ -303,20 +323,44 @@ mod tests {
             r#"<Project><Property Name="NI.Project.Description" Type="Str">A</Property><Property Name="NI.Project.Description" Type="Str">B</Property></Project>"#,
             r#"<Project><Property Name="NI.Project.Description" Type="Str"><String>A</String></Property></Project>"#,
         ] {
-            assert!(
-                xml::read_facts(xml.as_bytes(), "Project", false, true).is_err(),
-                "{xml}"
+            for read_description in [false, true] {
+                assert!(
+                    xml::read_facts(xml.as_bytes(), "Project", false, read_description).is_err(),
+                    "{xml}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn xml_directives_are_standalone_owner_description_lines() {
+        let xml = br#"<Project>
+            <Property Name="NI.Project.Description" Type="Str">&#35;wirelint saved-version
+                <![CDATA[#wirelint separate-compiled-code]]>
+            </Property>
+            <Item><Property Name="NI.Project.Description" Type="Str">#wirelint file-description</Property></Item>
+        </Project>"#;
+        for read_description in [false, true] {
+            let (facts, directives) =
+                xml::read_facts_with_members(xml, "Project", false, read_description, false)
+                    .unwrap();
+            assert_eq!(facts.has_description, read_description.then_some(false));
+            assert_eq!(
+                directives,
+                vec![
+                    b"#wirelint saved-version".to_vec(),
+                    b"#wirelint separate-compiled-code".to_vec(),
+                ]
             );
         }
-        assert!(
-            xml::read_facts(
-                r#"<Project><Property Name="NI.Project.Description" Type="Bool">true</Property></Project>"#.as_bytes(),
-                "Project",
-                false,
-                false
-            )
-            .is_ok()
-        );
+        let (facts, directives) = xml::read_facts_with_members(
+            br#"<Project><Property Name="NI.Project.Description" Type="Str">Text mentioning #wirelint saved-version
+#wirelint saved-version extra
+#WireLint saved-version</Property></Project>"#,
+            "Project", false, true, false,
+        ).unwrap();
+        assert_eq!(facts.has_description, Some(true));
+        assert!(directives.is_empty());
     }
 
     #[test]
@@ -330,6 +374,7 @@ mod tests {
         assert_eq!(
             xml::read_facts_with_members(xml, "Library", false, false, true)
                 .unwrap()
+                .0
                 .library_members,
             Some(vec!["Subfolder/child.vi".to_owned(), "root.vi".to_owned()])
         );
@@ -342,6 +387,7 @@ mod tests {
                 false,
             )
             .unwrap()
+            .0
             .library_members,
             None
         );

@@ -44,6 +44,53 @@ file; the remaining files are still analyzed.
 If all rules are disabled, discovery still runs, but file contents are not
 read or parsed. Findings and errors are reported after analysis finishes.
 
+## Skipping a rule with a bookmark
+
+Add a free label to a VI's block diagram containing exactly:
+
+```text
+#wirelint file-description
+```
+
+Replace `file-description` with any built-in rule ID. Matching is
+case-sensitive; the directive consists of two whitespace-separated tokens.
+Each directive skips that enabled rule for that file, even if it would otherwise
+pass. Repeated directives skip it only once. Other bookmarks, front-panel
+labels, owned labels, unknown rule IDs, and disabled rules have no effect.
+Nested diagram free labels are included. Every skipped rule is printed with
+its file path on stdout, with or without `--verbose`; it does not contribute a
+finding or affect the failure threshold. CI reports contain findings, not skips.
+
+The reader supports compressed version-b (`BDHb`) diagram heaps. Binary files
+without a diagram cannot contain a directive; unsupported diagram heap formats,
+malformed heaps, or heaps over 64 MiB cause an analysis error. Controls cannot
+use these directives. Reading file facts still happens before rules are
+skipped, so a directive does not suppress format or I/O errors.
+
+### XML description directives
+
+For `.lvproj`, `.lvlib`, and `.lvclass` files, put each directive on its own
+line in the file's native description:
+
+```text
+Shared instrument drivers.
+
+#wirelint separate-compiled-code
+#wirelint saved-version
+```
+
+Projects use `NI.Project.Description`; libraries and classes use
+`NI.Lib.Description`. Only the root owner's `Str` property applies, not nested
+item descriptions, XML comments, or other properties. Surrounding whitespace
+on each line is ignored. Prose containing a directive inline does not skip a
+rule. Multiple directives and duplicates follow the same rules as VI bookmarks.
+
+Directive lines are excluded when checking `file-description`: a description
+containing only directives still produces a finding unless that rule is
+explicitly skipped too. Descriptions are read and validated even when
+`file-description` is disabled, because directives may skip other enabled rules.
+If all rules are disabled, files are still not read.
+
 ## `separate-compiled-code`
 
 Requires **Separate compiled code from source** to be enabled.
@@ -111,8 +158,8 @@ at index 0 and a save record of at least 68 bytes. Older/unknown formats,
 missing or ambiguous save records, inconsistent headers, and out-of-bounds
 records are errors. XML must be well-formed UTF-8 (a UTF-8 BOM is accepted);
 wrong root elements, duplicate owner properties, wrong property types, and
-invalid Boolean values are errors. The reader extracts this setting only; it
-does not validate the contents of every unrelated RSRC resource.
+invalid Boolean values are errors. The reader does not validate the contents
+of every unrelated RSRC resource.
 
 ## `file-description`
 
@@ -131,8 +178,8 @@ The rule reads only the description belonging to the file itself:
 - **Libraries and classes**: the direct owner property `NI.Lib.Description`,
   with `Type="Str"`.
 
-Missing XML properties and blank descriptions produce findings. Nested item
-properties do not count. Duplicate or malformed owner properties and malformed
+Missing XML properties and blank or directive-only XML descriptions produce
+findings. Nested item properties do not count. Duplicate or malformed owner properties and malformed
 `STRG` records are analysis errors, not passing descriptions. Use
 `--verbose` to show findings, for example:
 

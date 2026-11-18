@@ -31,6 +31,10 @@ the field and broad file scope. Keeping parsers in separate modules isolates
 format-specific layouts while allowing analysis rules to consume common facts.
 Description extraction is requested only when the rule is enabled.
 
+[Decision 0019](0019-bookmark-rule-suppression.md) extends XML description
+extraction to read suppression directives whenever rules are enabled, and
+excludes directive lines from the non-empty description check.
+
 ## References
 
 - [Project identity and VI format references](0001-project-identity-and-format-references.md)

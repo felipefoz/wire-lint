@@ -106,6 +106,10 @@ both modes. Verbosity does not change analysis, counts, or exit status.
 Results are reported after analysis finishes; the initial message is not a
 per-file progress indicator.
 
+Skipped enabled rules are always printed on stdout with their file paths when
+suppressed by a [VI bookmark or XML description directive](rules.md#skipping-a-rule-with-a-bookmark).
+They do not appear in CI reports or count as findings.
+
 The final summary counts successfully analyzed files, findings, and analysis
 errors. Files with format/read errors are not counted as analyzed, and analysis
 errors are separate from error-severity findings. Errors go to stderr, while

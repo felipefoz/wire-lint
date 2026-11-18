@@ -1,12 +1,13 @@
 //! Extracts shared analysis facts from LabVIEW project, library, and class XML.
 
-use super::{FileFacts, Version, invalid};
+use super::{FileFacts, Version, directive_rule, invalid};
 use std::io;
 
 /// Reads the document owner's properties without inspecting nested items.
 ///
 /// Requested malformed metadata is reported as `InvalidData`; absent optional
 /// properties retain the format's existing false or `None` semantics.
+#[cfg(test)]
 pub(super) fn read_facts(
     bytes: &[u8],
     expected_root: &str,
@@ -14,16 +15,20 @@ pub(super) fn read_facts(
     read_description: bool,
 ) -> io::Result<FileFacts> {
     read_facts_with_members(bytes, expected_root, read_version, read_description, false)
+        .map(|(facts, _)| facts)
 }
 
-/// Reads owner facts and optionally extracts listed VI members from an `.lvlib`.
+/// Reads owner facts and description directives, optionally listing VI members.
+///
+/// Owner descriptions are validated even when their rule is disabled because
+/// directives can suppress other rules. Directive-only text is not a description.
 pub(super) fn read_facts_with_members(
     bytes: &[u8],
     expected_root: &str,
     read_version: bool,
     read_description: bool,
     read_library_members: bool,
-) -> io::Result<FileFacts> {
+) -> io::Result<(FileFacts, Vec<Vec<u8>>)> {
     let text = std::str::from_utf8(bytes)
         .map_err(|error| invalid(format!("XML must be UTF-8: {error}")))?;
     let document = roxmltree::Document::parse(text.trim_start_matches('\u{feff}'))
@@ -68,7 +73,8 @@ pub(super) fn read_facts_with_members(
     } else {
         None
     };
-    let has_description = if read_description {
+    let mut directives = Vec::new();
+    let description_present = {
         let property_name = if expected_root == "Project" {
             "NI.Project.Description"
         } else {
@@ -90,12 +96,19 @@ pub(super) fn read_facts_with_members(
                 .children()
                 .filter_map(|node| node.text().filter(|_| node.is_text()))
                 .collect();
-            value = Some(!text.trim().is_empty());
+            let mut has_prose = false;
+            for line in text.lines().map(str::trim) {
+                if directive_rule(line.as_bytes()).is_some() {
+                    directives.push(line.as_bytes().to_vec());
+                } else if !line.is_empty() {
+                    has_prose = true;
+                }
+            }
+            value = Some(has_prose);
         }
-        Some(value.unwrap_or(false))
-    } else {
-        None
+        value.unwrap_or(false)
     };
+    let has_description = read_description.then_some(description_present);
     let library_members = if read_library_members && expected_root == "Library" {
         let mut members = Vec::new();
         for item in root
@@ -114,16 +127,19 @@ pub(super) fn read_facts_with_members(
     } else {
         None
     };
-    Ok(FileFacts {
-        separate_compiled_code: value.unwrap_or(false),
-        has_description,
-        saved_version,
-        debugging_enabled: None,
-        has_breakpoints: None,
-        auto_error_handling: None,
-        has_password: None,
-        linked_library: None,
-        library_members,
-        orphaned_vi: None,
-    })
+    Ok((
+        FileFacts {
+            separate_compiled_code: value.unwrap_or(false),
+            has_description,
+            saved_version,
+            debugging_enabled: None,
+            has_breakpoints: None,
+            auto_error_handling: None,
+            has_password: None,
+            linked_library: None,
+            library_members,
+            orphaned_vi: None,
+        },
+        directives,
+    ))
 }

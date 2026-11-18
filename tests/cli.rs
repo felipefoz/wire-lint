@@ -1,7 +1,7 @@
 //! End-to-end coverage of configuration, analysis, output, and process status.
 
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -101,9 +101,32 @@ fn vi_with_description_and_password(
     description: Option<&[u8]>,
     password_hashes: Option<&[u8]>,
 ) -> Vec<u8> {
+    vi_with_diagram(enabled, kind, description, password_hashes, None)
+}
+
+/// Constructs a VI with an optional compressed version-b diagram heap.
+fn vi_with_diagram(
+    enabled: bool,
+    kind: &[u8; 4],
+    description: Option<&[u8]>,
+    password_hashes: Option<&[u8]>,
+    heap: Option<&[u8]>,
+) -> Vec<u8> {
     let description_size = description.map_or(0, |text| 8 + text.len());
     let password_record_offset = 72 + description_size;
     let password_size = password_hashes.map_or(0, |hashes| 4 + hashes.len());
+    let diagram = heap.map(|heap| {
+        let mut plain = (heap.len() as u32).to_be_bytes().to_vec();
+        plain.extend_from_slice(heap);
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(&plain).unwrap();
+        let mut compressed = (plain.len() as u32).to_be_bytes().to_vec();
+        compressed.extend(encoder.finish().unwrap());
+        compressed
+    });
+    let diagram_offset = password_record_offset + password_size;
+    let diagram_size = diagram.as_ref().map_or(0, |payload| 4 + payload.len());
     let mut resources = vec![(b"LVSR", 0)];
     if description.is_some() {
         resources.push((b"STRG", 72));
@@ -111,8 +134,11 @@ fn vi_with_description_and_password(
     if password_hashes.is_some() {
         resources.push((b"BDPW", password_record_offset));
     }
+    if diagram.is_some() {
+        resources.push((b"BDHb", diagram_offset));
+    }
     let block_count = resources.len();
-    let data_size = password_record_offset + password_size;
+    let data_size = diagram_offset + diagram_size;
     let table_size = 4 + block_count * 12;
     let info_size = 52 + table_size + block_count * 20;
     let info_offset = 32 + data_size;
@@ -154,11 +180,213 @@ fn vi_with_description_and_password(
         put_u32(&mut bytes, record, hashes.len() as u32);
         bytes[record + 4..record + 4 + hashes.len()].copy_from_slice(hashes);
     }
+    if let Some(diagram) = diagram {
+        let record = 32 + diagram_offset;
+        put_u32(&mut bytes, record, diagram.len() as u32);
+        bytes[record + 4..record + 4 + diagram.len()].copy_from_slice(&diagram);
+    }
     bytes
 }
 
 fn put_u32(bytes: &mut [u8], offset: usize, value: u32) {
     bytes[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
+}
+
+#[test]
+fn bookmark_skips_only_the_named_enabled_rule_and_is_always_reported() {
+    let directory = TestDirectory::new();
+    // Diagram -> zPlaneList -> free label -> text record -> text.
+    let text = b"#wirelint file-description";
+    let mut heap = vec![
+        0x10,
+        0x18,
+        1,
+        0xfe,
+        0,
+        27,
+        0x01,
+        0x4e,
+        0x10,
+        0x19,
+        1,
+        0xfe,
+        0,
+        10,
+        0x11,
+        0x2d,
+        1,
+        0xfe,
+        0,
+        1,
+        0xc4,
+        0x22,
+        text.len() as u8,
+    ];
+    heap.extend_from_slice(text);
+    heap.extend_from_slice(&[0x09, 0x2d, 0x08, 0x19, 0x09, 0x4e, 0x08, 0x18]);
+    directory.write(
+        "ignored.vi",
+        vi_with_diagram(false, b"LVIN", None, None, Some(&heap)),
+    );
+    directory.write("ordinary.vi", vi_without_description(false, b"LVIN"));
+    let output = directory.scan(&["--fail-on", "warning"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("ignored.vi: skipped [file-description]"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("file-description: 1 finding(s)."));
+    assert!(stdout.contains("separate-compiled-code: 2 finding(s)."));
+
+    let config = directory.write(
+        "disabled.yaml",
+        "version: 1\nrules:\n  file-description:\n    enabled: false\n",
+    );
+    let output = directory.configured_scan(&config, &[]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(!stdout.contains("skipped [file-description]"));
+}
+
+#[test]
+fn malformed_block_diagram_is_an_analysis_error() {
+    let directory = TestDirectory::new();
+    directory.write(
+        "broken.vi",
+        vi_with_diagram(true, b"LVIN", None, None, Some(&[0x08, 24])),
+    );
+    let output = directory.scan(&["--fail-on", "none"]);
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("broken.vi: analysis error:"), "{stderr}");
+    assert!(stderr.contains("BDHb"), "{stderr}");
+}
+
+#[test]
+fn xml_description_directives_skip_only_owner_rules_in_both_output_modes() {
+    let directory = TestDirectory::new();
+    for (extension, root, property) in [
+        ("lvproj", "Project", "NI.Project.Description"),
+        ("lvlib", "Library", "NI.Lib.Description"),
+        ("LVCLASS", "LVClass", "NI.Lib.Description"),
+    ] {
+        directory.write(&format!("suppressed.{extension}"), format!(
+            r#"<{root} LVVersion="19008000"><Property Name="{property}" Type="Str">Shared drivers.
+#wirelint saved-version
+  #wirelint separate-compiled-code
+#wirelint saved-version
+#wirelint unknown-rule
+</Property></{root}>"#,
+        ));
+    }
+    directory.write("ordinary.lvproj", r#"<Project LVVersion="20008000">
+        <Property Name="NI.LV.All.SourceOnly" Type="Bool">true</Property>
+        <Item><Property Name="NI.Project.Description" Type="Str">#wirelint file-description</Property></Item>
+    </Project>"#);
+    for verbose in [false, true] {
+        let destination = directory.0.join("report.json");
+        let mut args = vec![
+            "--fail-on",
+            "warning",
+            "--format",
+            "gitlab",
+            "--output",
+            destination.to_str().unwrap(),
+        ];
+        if verbose {
+            args.push("--verbose");
+        }
+        let output = directory.scan(&args);
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stderr.is_empty());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert_eq!(stdout.matches(": skipped [").count(), 6, "{stdout}");
+        assert!(!stdout.contains("skipped [unknown-rule]"), "{stdout}");
+        assert!(!stdout.contains("ordinary.lvproj: skipped"), "{stdout}");
+        let report: serde_json::Value =
+            serde_json::from_slice(&fs::read(destination).unwrap()).unwrap();
+        let findings = report.as_array().unwrap();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0]["check_name"], "file-description");
+        assert_eq!(findings[0]["location"]["path"], "ordinary.lvproj");
+    }
+    let config = directory.write(
+        "config.yaml",
+        "version: 1\nrules:\n  file-description:\n    enabled: false\n",
+    );
+    let output = directory.configured_scan(&config, &["--fail-on", "warning"]);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(stdout.matches(": skipped [").count(), 6, "{stdout}");
+}
+
+#[test]
+fn xml_directives_alone_do_not_satisfy_file_description_or_hide_analysis_errors() {
+    let directory = TestDirectory::new();
+    for (extension, root, property) in [
+        ("lvproj", "Project", "NI.Project.Description"),
+        ("lvlib", "Library", "NI.Lib.Description"),
+        ("lvclass", "LVClass", "NI.Lib.Description"),
+    ] {
+        directory.write(
+            &format!("empty.{extension}"),
+            format!(
+                r#"<{root} LVVersion="19008000">
+                <Property Name="NI.LV.All.SourceOnly" Type="Bool">true</Property>
+                <Property Name="{property}" Type="Str">#wirelint saved-version</Property>
+            </{root}>"#,
+            ),
+        );
+    }
+    let output = directory.scan(&["--fail-on", "warning"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("file-description: 3 finding(s)."),
+        "{stdout}"
+    );
+    assert_eq!(stdout.matches(": skipped [saved-version]").count(), 3);
+
+    directory.write(
+        "explicit.lvproj",
+        r#"<Project LVVersion="20008000">
+        <Property Name="NI.LV.All.SourceOnly" Type="Bool">true</Property>
+        <Property Name="NI.Project.Description" Type="Str">#wirelint file-description</Property>
+    </Project>"#,
+    );
+    let output = directory.scan(&["--fail-on", "warning"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("explicit.lvproj: skipped [file-description]"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("file-description: 3 finding(s)."),
+        "{stdout}"
+    );
+
+    directory.write(
+        "broken.lvproj",
+        r#"<Project>
+        <Property Name="NI.Project.Description" Type="Str">#wirelint saved-version</Property>
+    </Project>"#,
+    );
+    let output = directory.scan(&["--fail-on", "none"]);
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("broken.lvproj: analysis error: missing root LVVersion attribute"),
+        "{stderr}"
+    );
 }
 
 #[test]
