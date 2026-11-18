@@ -273,8 +273,13 @@ fn xml_description_directives_skip_only_owner_rules_in_both_output_modes() {
         ("lvlib", "Library", "NI.Lib.Description"),
         ("LVCLASS", "LVClass", "NI.Lib.Description"),
     ] {
+        let mutation_history = if root == "LVClass" {
+            r#"<Property Name="NI.LVClass.Geneology" Type="Xml"/>"#
+        } else {
+            ""
+        };
         directory.write(&format!("suppressed.{extension}"), format!(
-            r#"<{root} LVVersion="19008000"><Property Name="{property}" Type="Str">Shared drivers.
+            r#"<{root} LVVersion="19008000">{mutation_history}<Property Name="{property}" Type="Str">Shared drivers.
 #wirelint saved-version
   #wirelint separate-compiled-code
 #wirelint saved-version
@@ -336,10 +341,15 @@ fn xml_directives_alone_do_not_satisfy_file_description_or_hide_analysis_errors(
         ("lvlib", "Library", "NI.Lib.Description"),
         ("lvclass", "LVClass", "NI.Lib.Description"),
     ] {
+        let mutation_history = if root == "LVClass" {
+            r#"<Property Name="NI.LVClass.Geneology" Type="Xml"/>"#
+        } else {
+            ""
+        };
         directory.write(
             &format!("empty.{extension}"),
             format!(
-                r#"<{root} LVVersion="19008000">
+                r#"<{root} LVVersion="19008000">{mutation_history}
                 <Property Name="NI.LV.All.SourceOnly" Type="Bool">true</Property>
                 <Property Name="{property}" Type="Str">#wirelint saved-version</Property>
             </{root}>"#,
@@ -444,9 +454,14 @@ fn debugging_status_defaults_to_enabled_and_supports_reversed_or_disabled_policy
         } else {
             "NI.Lib.Description"
         };
+        let mutation_history = if root == "LVClass" {
+            r#"<Property Name="NI.LVClass.Geneology" Type="Xml"/>"#
+        } else {
+            ""
+        };
         directory.write(
             &format!("ignored.{extension}"),
-            format!(r#"<{root} LVVersion="20008000"><Property Name="NI.LV.All.SourceOnly" Type="Bool">true</Property><Property Name="{property}" Type="Str">Description</Property></{root}>"#),
+            format!(r#"<{root} LVVersion="20008000">{mutation_history}<Property Name="NI.LV.All.SourceOnly" Type="Bool">true</Property><Property Name="{property}" Type="Str">Description</Property></{root}>"#),
         );
     }
 
@@ -616,7 +631,7 @@ fn scans_xml_and_applies_yaml_severity_and_cli_threshold() {
     );
     directory.write(
         "b.LVCLASS",
-        r#"<LVClass LVVersion="20008000"><Property Name="NI.LV.All.SourceOnly" Type="Bool">true</Property><Property Name="NI.Lib.Description" Type="Str">Class documentation</Property></LVClass>"#,
+        r#"<LVClass LVVersion="20008000"><Property Name="NI.LVClass.Geneology" Type="Xml"/><Property Name="NI.LV.All.SourceOnly" Type="Bool">true</Property><Property Name="NI.Lib.Description" Type="Str">Class documentation</Property></LVClass>"#,
     );
     directory.write(
         "c.lvlib",
@@ -698,6 +713,43 @@ fn scans_xml_and_applies_yaml_severity_and_cli_threshold() {
 }
 
 #[test]
+fn class_mutation_history_flags_content_but_accepts_absent_or_empty_properties() {
+    let directory = TestDirectory::new();
+    directory.write("absent.lvclass", "<LVClass/>");
+    directory.write(
+        "empty.lvclass",
+        r#"<LVClass><Property Name="NI.LVClass.Geneology" Type="Xml"/></LVClass>"#,
+    );
+    directory.write(
+        "present.lvclass",
+        r#"<LVClass><Property Name="NI.LVClass.Geneology" Type="Xml"><History/></Property></LVClass>"#,
+    );
+    directory.write(
+        "nested.lvclass",
+        r#"<LVClass><Item><Property Name="NI.LVClass.Geneology" Type="Xml"><History/></Property></Item></LVClass>"#,
+    );
+    directory.write(
+        "ignored.lvlib",
+        r#"<Library><Property Name="NI.LVClass.Geneology" Type="Xml"><History/></Property></Library>"#,
+    );
+    let config = directory.write(
+        "checks.yaml",
+        "rules:\n  separate-compiled-code: { enabled: false }\n  saved-version: { enabled: false }\n  file-description: { enabled: false }\n  debugging-status: { enabled: false }\n  no-breakpoints: { enabled: false }\n  auto-error-handling: { enabled: false }\n  password-set: { enabled: false }\n  orphaned-vi: { enabled: false }\n  class-mutation-history: { enabled: true }\n",
+    );
+
+    let output = directory.configured_scan(&config, &["--verbose", "--fail-on", "warning"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Analyzed 5 file(s); 1 finding(s); 0 analysis error(s)."));
+    assert!(stdout.contains("present.lvclass: warning [class-mutation-history]"));
+    assert!(!stdout.contains("absent.lvclass:"));
+    assert!(!stdout.contains("empty.lvclass:"));
+    assert!(!stdout.contains("nested.lvclass:"));
+    assert!(!stdout.contains("ignored.lvlib:"));
+}
+
+#[test]
 fn file_description_checks_every_supported_labview_extension() {
     let directory = TestDirectory::new();
     let config = directory.write(
@@ -724,11 +776,19 @@ fn file_description_checks_every_supported_labview_extension() {
         ("lvclass", "LVClass", "NI.Lib.Description"),
         ("lvlib", "Library", "NI.Lib.Description"),
     ] {
+        let mutation_history = if root == "LVClass" {
+            r#"<Property Name="NI.LVClass.Geneology" Type="Xml"/>"#
+        } else {
+            ""
+        };
         directory.write(
             &format!("documented.{extension}"),
-            format!("<{root}><Property Name=\"{property}\" Type=\"Str\">File description</Property></{root}>"),
+            format!("<{root}>{mutation_history}<Property Name=\"{property}\" Type=\"Str\">File description</Property></{root}>"),
         );
-        directory.write(&format!("undocumented.{extension}"), format!("<{root}/>"));
+        directory.write(
+            &format!("undocumented.{extension}"),
+            format!("<{root}>{mutation_history}</{root}>"),
+        );
     }
 
     let output = directory.configured_scan(&config, &["--verbose", "--fail-on", "warning"]);
@@ -783,7 +843,7 @@ fn analysis_errors_are_explicit_and_do_not_stop_other_files() {
 
 #[test]
 fn orphaned_vi_rule_flags_only_a_scanned_library_that_omits_the_vi() {
-    let rule_config = "rules:\n  separate-compiled-code: { enabled: false }\n  saved-version: { enabled: false }\n  file-description: { enabled: false }\n  debugging-status: { enabled: false }\n  no-breakpoints: { enabled: false }\n  auto-error-handling: { enabled: false }\n  password-set: { enabled: false }\n  orphaned-vi: { enabled: true }\n";
+    let rule_config = "rules:\n  separate-compiled-code: { enabled: false }\n  saved-version: { enabled: false }\n  file-description: { enabled: false }\n  debugging-status: { enabled: false }\n  no-breakpoints: { enabled: false }\n  auto-error-handling: { enabled: false }\n  password-set: { enabled: false }\n  orphaned-vi: { enabled: true }\n  class-mutation-history: { enabled: false }\n";
 
     let orphaned = TestDirectory::new();
     orphaned.write(
@@ -824,7 +884,7 @@ fn disabling_all_rules_skips_parsing() {
     directory.write("broken.vi", []);
     let config = directory.write(
         "checks.yaml",
-        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n  no-breakpoints:\n    enabled: false\n  auto-error-handling:\n    enabled: false\n  password-set:\n    enabled: false\n  orphaned-vi:\n    enabled: false\n",
+        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n  no-breakpoints:\n    enabled: false\n  auto-error-handling:\n    enabled: false\n  password-set:\n    enabled: false\n  orphaned-vi:\n    enabled: false\n  class-mutation-history:\n    enabled: false\n",
     );
     let output = directory.configured_scan(&config, &[]);
     assert_eq!(output.status.code(), Some(0));
@@ -986,7 +1046,10 @@ fn saved_version_rule_checks_files_and_respects_configuration() {
     older[36..40].copy_from_slice(&0x19008000_u32.to_be_bytes());
     directory.write("older.vi", older);
     directory.write("equal.lvproj", r#"<Project LVVersion="20008000"/>"#);
-    directory.write("newer.lvclass", r#"<LVClass LVVersion="21008000"/>"#);
+    directory.write(
+        "newer.lvclass",
+        r#"<LVClass LVVersion="21008000"><Property Name="NI.LVClass.Geneology" Type="Xml"/></LVClass>"#,
+    );
     directory.write("old.lvlib", r#"<Library LVVersion="19008000"/>"#);
     let config = directory.write(
         "checks.yaml",
@@ -1049,7 +1112,10 @@ fn saved_version_bounds_apply_to_binary_and_xml_files() {
         directory.write(name, bytes);
     }
     directory.write("older.lvproj", r#"<Project LVVersion="19008000"/>"#);
-    directory.write("equal.lvclass", r#"<LVClass LVVersion="20008000"/>"#);
+    directory.write(
+        "equal.lvclass",
+        r#"<LVClass LVVersion="20008000"><Property Name="NI.LVClass.Geneology" Type="Xml"/></LVClass>"#,
+    );
     directory.write("newer.lvlib", r#"<Library LVVersion="21008000"/>"#);
     for (bounds, expected_count) in [
         ("maximum-version: '20.0'", 2),
@@ -1234,7 +1300,7 @@ fn ci_reports_cover_empty_scans_disabled_rules_and_partial_analysis_failures() {
     }
     let config = directory.write(
         "checks.yaml",
-        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n  no-breakpoints:\n    enabled: false\n  auto-error-handling:\n    enabled: false\n  password-set:\n    enabled: false\n  orphaned-vi:\n    enabled: false\n",
+        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n  no-breakpoints:\n    enabled: false\n  auto-error-handling:\n    enabled: false\n  password-set:\n    enabled: false\n  orphaned-vi:\n    enabled: false\n  class-mutation-history:\n    enabled: false\n",
     );
     let output = directory.configured_scan(
         &config,

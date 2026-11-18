@@ -54,3 +54,7 @@ rules:
   orphaned-vi:
     enabled: true
     severity: error
+  # Warn when LabVIEW class XML contains mutation-history content.
+  class-mutation-history:
+    enabled: true
+    severity: warning

@@ -127,6 +127,16 @@ pub(super) fn read_facts_with_members(
     } else {
         None
     };
+    let has_mutation_history = (expected_root == "LVClass").then(|| {
+        root.children().any(|node| {
+            node.has_tag_name("Property")
+                && node.attribute("Name") == Some("NI.LVClass.Geneology")
+                && node.attribute("Type") == Some("Xml")
+                && node.children().any(|child| {
+                    child.is_element() || child.text().is_some_and(|text| !text.trim().is_empty())
+                })
+        })
+    });
     Ok((
         FileFacts {
             separate_compiled_code: value.unwrap_or(false),
@@ -139,6 +149,7 @@ pub(super) fn read_facts_with_members(
             linked_library: None,
             library_members,
             orphaned_vi: None,
+            has_mutation_history,
         },
         directives,
     ))

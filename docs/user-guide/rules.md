@@ -21,6 +21,7 @@ and shared `enabled` and `severity` configuration options. See
 - [auto-error-handling](#auto-error-handling)
 - [password-set](#password-set)
 - [orphaned-vi](#orphaned-vi)
+- [class-mutation-history](#class-mutation-history)
 
 ## Execution order
 
@@ -376,6 +377,31 @@ orphan-vi.vi: error [orphaned-vi]: This VI points to a library that does not lis
 
 Add the VI to its owning library in LabVIEW, or remove/fix the stale library
 link. WireLint does not modify either file.
+
+## `class-mutation-history`
+
+Warns when `.lvclass` XML contains nonempty content in the direct `Property` on
+the `LVClass` root with `Name="NI.LVClass.Geneology"` and `Type="Xml"`. The
+rule is enabled by default with `warning` severity.
+Projects, libraries, and VI-family files do not apply and produce no findings.
+
+```yaml
+rules:
+  class-mutation-history:
+    enabled: true
+    severity: warning
+```
+
+Nonempty text or child elements in the property produce a finding. An absent,
+empty, or whitespace-only value passes. Nested properties and properties with
+a different type are ignored. WireLint does not validate the history data or
+modify the class file.
+
+Use `--verbose` to show findings:
+
+```text
+Example.lvclass: warning [class-mutation-history]: This LabVIEW class contains mutation-history content in its NI.LVClass.Geneology XML property.
+```
 
 ## Adding a built-in rule
 

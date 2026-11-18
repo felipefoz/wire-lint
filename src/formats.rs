@@ -71,6 +71,8 @@ pub struct FileFacts {
     pub library_members: Option<Vec<String>>,
     /// Whether a scanned owning library omits this VI from its member list.
     pub orphaned_vi: Option<bool>,
+    /// Whether an `.lvclass` has nonempty content in its root geneology property.
+    pub has_mutation_history: Option<bool>,
 }
 
 /// Reads a VI-family RSRC file or an XML project/library/class document.
@@ -401,5 +403,61 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn reads_mutation_history_only_from_the_class_root() {
+        for (extension, root, contents, expected) in [
+            (
+                "lvclass",
+                "LVClass",
+                r#"<Property Name="NI.LVClass.Geneology" Type="Xml"><History/></Property>"#,
+                Some(true),
+            ),
+            ("lvclass", "LVClass", "", Some(false)),
+            (
+                "lvclass",
+                "LVClass",
+                r#"<Property Name="NI.LVClass.Geneology" Type="Xml">  <![CDATA[ ]]>
+</Property>"#,
+                Some(false),
+            ),
+            (
+                "lvclass",
+                "LVClass",
+                "<Item><Property Name=\"NI.LVClass.Geneology\" Type=\"Xml\">history</Property></Item>",
+                Some(false),
+            ),
+            (
+                "lvclass",
+                "LVClass",
+                r#"<Property Name="NI.LVClass.Geneology" Type="Xml">history</Property>"#,
+                Some(true),
+            ),
+            (
+                "lvclass",
+                "LVClass",
+                "<Property Name=\"NI.LVClass.Geneology\" Type=\"Str\">history</Property>",
+                Some(false),
+            ),
+            (
+                "lvlib",
+                "Library",
+                r#"<Property Name="NI.LVClass.Geneology" Type="Xml"/>"#,
+                None,
+            ),
+            ("lvproj", "Project", "", None),
+        ] {
+            let xml = format!("<{root}>{contents}</{root}>");
+            let facts = read_facts(
+                Path::new(&format!("file.{extension}")),
+                xml.as_bytes(),
+                false,
+                false,
+                false,
+            )
+            .unwrap();
+            assert_eq!(facts.has_mutation_history, expected, "{xml}");
+        }
     }
 }

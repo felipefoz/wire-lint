@@ -220,6 +220,7 @@ pub(super) fn read_facts_with_orphaned_vi(
             linked_library,
             library_members: None,
             orphaned_vi: None,
+            has_mutation_history: None,
         },
         bookmarks,
     ))

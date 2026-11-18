@@ -46,6 +46,7 @@ pub static BUILT_INS: &[&dyn Rule] = &[
     &AutoErrorHandling,
     &PasswordSet,
     &OrphanedVi,
+    &ClassMutationHistory,
 ];
 
 /// Default minimum release for saved LabVIEW files.
@@ -274,6 +275,32 @@ impl Rule for OrphanedVi {
     }
 }
 
+/// Rejects nonempty class mutation-history content in LabVIEW class XML.
+struct ClassMutationHistory;
+
+impl Rule for ClassMutationHistory {
+    fn id(&self) -> &'static str {
+        "class-mutation-history"
+    }
+
+    fn description(&self) -> &'static str {
+        "Disallow mutation-history content in LabVIEW classes"
+    }
+
+    fn default_severity(&self) -> Severity {
+        Severity::Warning
+    }
+
+    fn check(&self, facts: &FileFacts, _options: Option<&RuleConfig>) -> Option<String> {
+        facts
+            .has_mutation_history
+            .filter(|has_history| *has_history)
+            .map(|_| {
+                "This LabVIEW class contains mutation-history content in its NI.LVClass.Geneology XML property.".to_owned()
+            })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,6 +321,7 @@ mod tests {
                     linked_library: None,
                     library_members: None,
                     orphaned_vi: None,
+                    has_mutation_history: None,
                 },
                 None
             )
@@ -312,6 +340,7 @@ mod tests {
                     linked_library: None,
                     library_members: None,
                     orphaned_vi: None,
+                    has_mutation_history: None,
                 },
                 None
             )
@@ -363,6 +392,7 @@ mod tests {
                 linked_library: None,
                 library_members: None,
                 orphaned_vi: None,
+                has_mutation_history: None,
             };
             assert_eq!(rule.check(&facts, None).is_some(), violation);
         }
@@ -460,6 +490,7 @@ mod tests {
                 linked_library: None,
                 library_members: None,
                 orphaned_vi: None,
+                has_mutation_history: None,
             };
             let options = RuleConfig {
                 enabled: true,
@@ -491,6 +522,7 @@ mod tests {
                 linked_library: None,
                 library_members: None,
                 orphaned_vi: None,
+                has_mutation_history: None,
             };
             assert_eq!(rule.check(&facts, None).is_some(), violation);
         }
@@ -510,6 +542,7 @@ mod tests {
                 linked_library: None,
                 library_members: None,
                 orphaned_vi: None,
+                has_mutation_history: None,
             };
             assert_eq!(
                 DebuggingStatus.check(&facts, None).is_some(),
@@ -555,6 +588,7 @@ mod tests {
                 linked_library: None,
                 library_members: None,
                 orphaned_vi: None,
+                has_mutation_history: None,
             };
             assert_eq!(NoBreakpoints.check(&facts, None).is_some(), expected);
         }
@@ -575,6 +609,7 @@ mod tests {
                 linked_library: None,
                 library_members: None,
                 orphaned_vi: None,
+                has_mutation_history: None,
             };
             assert_eq!(PasswordSet.check(&facts, None).is_some(), expected);
         }
@@ -597,6 +632,7 @@ mod tests {
                 linked_library: None,
                 library_members: None,
                 orphaned_vi: None,
+                has_mutation_history: None,
             };
             assert_eq!(AutoErrorHandling.check(&facts, None).is_some(), expected);
         }
@@ -617,8 +653,32 @@ mod tests {
                 linked_library: None,
                 library_members: None,
                 orphaned_vi,
+                has_mutation_history: None,
             };
             assert_eq!(OrphanedVi.check(&facts, None).is_some(), expected);
+        }
+    }
+
+    #[test]
+    fn class_mutation_history_rule_flags_only_classes_with_content() {
+        assert_eq!(ClassMutationHistory.default_severity(), Severity::Warning);
+        for (has_mutation_history, expected) in
+            [(None, false), (Some(true), true), (Some(false), false)]
+        {
+            let facts = FileFacts {
+                separate_compiled_code: true,
+                has_description: None,
+                saved_version: None,
+                debugging_enabled: None,
+                has_breakpoints: None,
+                auto_error_handling: None,
+                has_password: None,
+                linked_library: None,
+                library_members: None,
+                orphaned_vi: None,
+                has_mutation_history,
+            };
+            assert_eq!(ClassMutationHistory.check(&facts, None).is_some(), expected);
         }
     }
 }
