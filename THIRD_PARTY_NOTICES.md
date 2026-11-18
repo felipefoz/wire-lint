@@ -51,6 +51,14 @@ The `auto-error-handling` rule uses pylavi's
 interpretation (viFlags2 word 1, mask `0x20000000`), which identifies the
 saved automatic error handling setting. No implementation code was copied.
 
+The `orphaned-vi` rule's linker-table and path-format research was informed by
+pylabview's [`LVlinkinfo.py`](https://github.com/mefistotelis/pylabview/blob/master/pylabview/LVlinkinfo.py)
+(`VILB`, VI-to-library links) and LVPM's
+[`deptree.py`](https://github.com/labview-package-manager/lvpm/blob/master/tools/linkfix/deptree.py)
+and [`linkobjs.py`](https://github.com/labview-package-manager/lvpm/blob/master/tools/linkfix/linkobjs.py)
+(`LIvi` linker sections and bounded `PTH0` paths). These sources were
+consulted as format descriptions; no implementation code was copied.
+
 pylabview attributes these source files to Mefistotelis and distributes them
 under the MIT License. Refer to its
 [license](https://github.com/mefistotelis/pylabview/blob/master/LICENSE).

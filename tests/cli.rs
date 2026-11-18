@@ -552,12 +552,46 @@ fn analysis_errors_are_explicit_and_do_not_stop_other_files() {
 }
 
 #[test]
+fn orphaned_vi_rule_flags_only_a_scanned_library_that_omits_the_vi() {
+    let rule_config = "rules:\n  separate-compiled-code: { enabled: false }\n  saved-version: { enabled: false }\n  file-description: { enabled: false }\n  debugging-status: { enabled: false }\n  no-breakpoints: { enabled: false }\n  auto-error-handling: { enabled: false }\n  password-set: { enabled: false }\n  orphaned-vi: { enabled: true }\n";
+
+    let orphaned = TestDirectory::new();
+    orphaned.write("orphan-vi.vi", include_bytes!("../sandbox/orphan-vi.vi"));
+    orphaned.write(
+        "orphaned-example.lvlib",
+        include_bytes!("../sandbox/orphaned-example.lvlib"),
+    );
+    let config = orphaned.write("checks.yaml", rule_config);
+    let output = orphaned.configured_scan(&config, &["--verbose"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Analyzed 2 file(s); 1 finding(s); 0 analysis error(s)."));
+    assert!(stdout.contains("orphan-vi.vi: error [orphaned-vi]"));
+    assert!(stdout.contains("Findings by severity: 0 info; 0 warning; 1 error."));
+
+    let listed = TestDirectory::new();
+    listed.write("orphan-vi.vi", include_bytes!("../sandbox/orphan-vi.vi"));
+    listed.write(
+        "orphaned-example.lvlib",
+        r#"<Library><Item Name="orphan-vi.vi" Type="VI" URL="orphan-vi.vi"/></Library>"#,
+    );
+    let config = listed.write("checks.yaml", rule_config);
+    let output = listed.configured_scan(&config, &["--verbose"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Analyzed 2 file(s); 0 finding(s); 0 analysis error(s)."));
+    assert!(!stdout.contains("[orphaned-vi]"));
+}
+
+#[test]
 fn disabling_all_rules_skips_parsing() {
     let directory = TestDirectory::new();
     directory.write("broken.vi", []);
     let config = directory.write(
         "checks.yaml",
-        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n  no-breakpoints:\n    enabled: false\n  auto-error-handling:\n    enabled: false\n  password-set:\n    enabled: false\n",
+        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n  no-breakpoints:\n    enabled: false\n  auto-error-handling:\n    enabled: false\n  password-set:\n    enabled: false\n  orphaned-vi:\n    enabled: false\n",
     );
     let output = directory.configured_scan(&config, &[]);
     assert_eq!(output.status.code(), Some(0));
@@ -967,7 +1001,7 @@ fn ci_reports_cover_empty_scans_disabled_rules_and_partial_analysis_failures() {
     }
     let config = directory.write(
         "checks.yaml",
-        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n  no-breakpoints:\n    enabled: false\n  auto-error-handling:\n    enabled: false\n  password-set:\n    enabled: false\n",
+        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n  no-breakpoints:\n    enabled: false\n  auto-error-handling:\n    enabled: false\n  password-set:\n    enabled: false\n  orphaned-vi:\n    enabled: false\n",
     );
     let output = directory.configured_scan(
         &config,

@@ -4,7 +4,7 @@ mod rsrc;
 mod xml;
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// LabVIEW major and minor release numbers, ordered numerically.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -64,6 +64,12 @@ pub struct FileFacts {
     pub auto_error_handling: Option<bool>,
     /// Whether a password is set; absent for controls and XML containers.
     pub has_password: Option<bool>,
+    /// Relative path to the owning library, when present in the VI link table.
+    pub linked_library: Option<PathBuf>,
+    /// VI member URLs listed by an `.lvlib`, when requested.
+    pub library_members: Option<Vec<String>>,
+    /// Whether a scanned owning library omits this VI from its member list.
+    pub orphaned_vi: Option<bool>,
 }
 
 /// Reads a VI-family RSRC file or an XML project/library/class document.
@@ -73,6 +79,7 @@ pub struct FileFacts {
 /// When `read_password` is true, malformed BDPW metadata is an error.
 /// Malformed documents and unsupported binary layouts return `InvalidData`,
 /// never an assumed value.
+#[cfg(test)]
 pub fn read_facts(
     path: &Path,
     bytes: &[u8],
@@ -80,18 +87,47 @@ pub fn read_facts(
     read_description: bool,
     read_password: bool,
 ) -> io::Result<FileFacts> {
+    read_facts_with_orphaned_vi(
+        path,
+        bytes,
+        read_version,
+        read_description,
+        read_password,
+        false,
+    )
+}
+
+/// Reads facts and optionally extracts the VI/library relationship metadata.
+pub fn read_facts_with_orphaned_vi(
+    path: &Path,
+    bytes: &[u8],
+    read_version: bool,
+    read_description: bool,
+    read_password: bool,
+    read_orphaned_vi: bool,
+) -> io::Result<FileFacts> {
     let xml = path.extension().and_then(|value| value.to_str());
     match xml {
         Some(extension) if extension.eq_ignore_ascii_case("lvproj") => {
             xml::read_facts(bytes, "Project", read_version, read_description)
         }
-        Some(extension) if extension.eq_ignore_ascii_case("lvlib") => {
-            xml::read_facts(bytes, "Library", read_version, read_description)
-        }
+        Some(extension) if extension.eq_ignore_ascii_case("lvlib") => xml::read_facts_with_members(
+            bytes,
+            "Library",
+            read_version,
+            read_description,
+            read_orphaned_vi,
+        ),
         Some(extension) if extension.eq_ignore_ascii_case("lvclass") => {
             xml::read_facts(bytes, "LVClass", read_version, read_description)
         }
-        _ => rsrc::read_facts_with_password(bytes, read_version, read_description, read_password),
+        _ => rsrc::read_facts_with_orphaned_vi(
+            bytes,
+            read_version,
+            read_description,
+            read_password,
+            read_orphaned_vi,
+        ),
     }
 }
 
@@ -280,6 +316,44 @@ mod tests {
                 false
             )
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn reads_library_member_urls_only_when_requested() {
+        let xml = br#"<Library>
+            <Item Name="Group" Type="Folder">
+                <Item Name="child.vi" Type="VI" URL="Subfolder/child.vi"/>
+            </Item>
+            <Item Name="root.vi" Type="VI" URL="root.vi"/>
+        </Library>"#;
+        assert_eq!(
+            xml::read_facts_with_members(xml, "Library", false, false, true)
+                .unwrap()
+                .library_members,
+            Some(vec!["Subfolder/child.vi".to_owned(), "root.vi".to_owned()])
+        );
+        assert_eq!(
+            xml::read_facts_with_members(
+                br#"<Library><Item Name="missing-url.vi" Type="VI"/></Library>"#,
+                "Library",
+                false,
+                false,
+                false,
+            )
+            .unwrap()
+            .library_members,
+            None
+        );
+        assert!(
+            xml::read_facts_with_members(
+                br#"<Library><Item Name="missing-url.vi" Type="VI"/></Library>"#,
+                "Library",
+                false,
+                false,
+                true,
+            )
+            .is_err()
         );
     }
 }

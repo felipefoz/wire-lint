@@ -3,6 +3,7 @@
 use crate::config::{Config, FailOn};
 use crate::formats;
 use crate::rules::{BUILT_INS, Severity};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -82,23 +83,23 @@ pub fn analyze(root: &Path, files: &[PathBuf], config: &Config) -> Report {
     let read_password = active
         .iter()
         .any(|(rule, _, _)| rule.id() == "password-set");
+    let read_orphaned_vi = active.iter().any(|(rule, _, _)| rule.id() == "orphaned-vi");
+    let mut analyzed_files = Vec::new();
     for path in files {
         let result = fs::read(root.join(path)).and_then(|bytes| {
-            formats::read_facts(path, &bytes, read_version, read_description, read_password)
+            formats::read_facts_with_orphaned_vi(
+                path,
+                &bytes,
+                read_version,
+                read_description,
+                read_password,
+                read_orphaned_vi,
+            )
         });
         match result {
             Ok(facts) => {
                 report.analyzed += 1;
-                for (rule, severity, options) in &active {
-                    if let Some(message) = rule.check(&facts, *options) {
-                        report.findings.push(Finding {
-                            path: path.clone(),
-                            rule: rule.id(),
-                            severity: *severity,
-                            message,
-                        });
-                    }
-                }
+                analyzed_files.push((path.clone(), facts));
             }
             Err(error) => report.errors.push(AnalysisError {
                 path: path.clone(),
@@ -106,5 +107,97 @@ pub fn analyze(root: &Path, files: &[PathBuf], config: &Config) -> Report {
             }),
         }
     }
+    if read_orphaned_vi {
+        apply_orphaned_vi_facts(&mut analyzed_files);
+    }
+    for (path, facts) in analyzed_files {
+        for (rule, severity, options) in &active {
+            if let Some(message) = rule.check(&facts, *options) {
+                report.findings.push(Finding {
+                    path: path.clone(),
+                    rule: rule.id(),
+                    severity: *severity,
+                    message,
+                });
+            }
+        }
+    }
     report
+}
+
+/// Resolves only relative VI/library URLs against files discovered in this scan.
+fn apply_orphaned_vi_facts(files: &mut [(PathBuf, formats::FileFacts)]) {
+    let mut library_members = HashMap::<PathBuf, HashSet<PathBuf>>::new();
+    for (library_path, facts) in files.iter() {
+        let Some(members) = facts.library_members.as_ref() else {
+            continue;
+        };
+        let base = library_path.parent().unwrap_or_else(|| Path::new(""));
+        let resolved_members = members
+            .iter()
+            .filter_map(|member| resolve_scanned_path(base, member))
+            .collect();
+        library_members.insert(library_path.clone(), resolved_members);
+    }
+
+    for (vi_path, facts) in files {
+        let Some(linked_library) = facts.linked_library.as_deref() else {
+            continue;
+        };
+        let base = vi_path.parent().unwrap_or_else(|| Path::new(""));
+        let Some(library_path) = resolve_scanned_path(base, &linked_library.to_string_lossy())
+        else {
+            continue;
+        };
+        let Some(members) = library_members.get(&library_path) else {
+            continue;
+        };
+        facts.orphaned_vi = Some(!members.contains(vi_path));
+    }
+}
+
+/// Normalizes a relative URL while refusing absolute paths and scan-root escapes.
+fn resolve_scanned_path(base: &Path, path: &str) -> Option<PathBuf> {
+    let path = path.replace('\\', "/");
+    if path.starts_with('/')
+        || path.as_bytes().get(1) == Some(&b':')
+        || path.as_bytes().contains(&0)
+    {
+        return None;
+    }
+    let mut resolved = base.to_path_buf();
+    for component in path.split('/') {
+        match component {
+            "" | "." => {}
+            ".." if !resolved.pop() => return None,
+            ".." => {}
+            component => resolved.push(component),
+        }
+    }
+    Some(resolved)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_scanned_path;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn normalizes_relative_urls_and_rejects_paths_outside_the_scan_root() {
+        assert_eq!(
+            resolve_scanned_path(Path::new("nested"), r"..\library\owner.lvlib"),
+            Some(PathBuf::from("library").join("owner.lvlib"))
+        );
+        for path in [
+            "/absolute/file.vi",
+            r"C:\absolute\file.vi",
+            "../../outside.vi",
+        ] {
+            assert_eq!(
+                resolve_scanned_path(Path::new("nested"), path),
+                None,
+                "{path}"
+            );
+        }
+    }
 }

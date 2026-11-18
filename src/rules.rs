@@ -45,6 +45,7 @@ pub static BUILT_INS: &[&dyn Rule] = &[
     &NoBreakpoints,
     &AutoErrorHandling,
     &PasswordSet,
+    &OrphanedVi,
 ];
 
 /// Default minimum release for saved LabVIEW files.
@@ -249,6 +250,30 @@ impl Rule for PasswordSet {
     }
 }
 
+/// Rejects a VI that references a scanned library which does not list it.
+struct OrphanedVi;
+
+impl Rule for OrphanedVi {
+    fn id(&self) -> &'static str {
+        "orphaned-vi"
+    }
+
+    fn description(&self) -> &'static str {
+        "Require library-owned VIs to be listed by their owning library"
+    }
+
+    fn default_severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn check(&self, facts: &FileFacts, _options: Option<&RuleConfig>) -> Option<String> {
+        facts
+            .orphaned_vi
+            .filter(|orphaned| *orphaned)
+            .map(|_| "This VI points to a library that does not list it.".to_owned())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,6 +291,9 @@ mod tests {
                     has_breakpoints: None,
                     auto_error_handling: None,
                     has_password: None,
+                    linked_library: None,
+                    library_members: None,
+                    orphaned_vi: None,
                 },
                 None
             )
@@ -281,6 +309,9 @@ mod tests {
                     has_breakpoints: None,
                     auto_error_handling: None,
                     has_password: None,
+                    linked_library: None,
+                    library_members: None,
+                    orphaned_vi: None,
                 },
                 None
             )
@@ -329,6 +360,9 @@ mod tests {
                 has_breakpoints: None,
                 auto_error_handling: None,
                 has_password: None,
+                linked_library: None,
+                library_members: None,
+                orphaned_vi: None,
             };
             assert_eq!(rule.check(&facts, None).is_some(), violation);
         }
@@ -423,6 +457,9 @@ mod tests {
                 has_breakpoints: None,
                 auto_error_handling: None,
                 has_password: None,
+                linked_library: None,
+                library_members: None,
+                orphaned_vi: None,
             };
             let options = RuleConfig {
                 enabled: true,
@@ -451,6 +488,9 @@ mod tests {
                 has_breakpoints: None,
                 auto_error_handling: None,
                 has_password: None,
+                linked_library: None,
+                library_members: None,
+                orphaned_vi: None,
             };
             assert_eq!(rule.check(&facts, None).is_some(), violation);
         }
@@ -467,6 +507,9 @@ mod tests {
                 has_breakpoints: None,
                 auto_error_handling: None,
                 has_password: None,
+                linked_library: None,
+                library_members: None,
+                orphaned_vi: None,
             };
             assert_eq!(
                 DebuggingStatus.check(&facts, None).is_some(),
@@ -509,6 +552,9 @@ mod tests {
                 has_breakpoints,
                 auto_error_handling: None,
                 has_password: None,
+                linked_library: None,
+                library_members: None,
+                orphaned_vi: None,
             };
             assert_eq!(NoBreakpoints.check(&facts, None).is_some(), expected);
         }
@@ -526,6 +572,9 @@ mod tests {
                 has_breakpoints: None,
                 auto_error_handling: None,
                 has_password,
+                linked_library: None,
+                library_members: None,
+                orphaned_vi: None,
             };
             assert_eq!(PasswordSet.check(&facts, None).is_some(), expected);
         }
@@ -545,8 +594,31 @@ mod tests {
                 has_breakpoints: None,
                 auto_error_handling,
                 has_password: None,
+                linked_library: None,
+                library_members: None,
+                orphaned_vi: None,
             };
             assert_eq!(AutoErrorHandling.check(&facts, None).is_some(), expected);
+        }
+    }
+
+    #[test]
+    fn orphaned_vi_rule_is_an_error_only_for_unlisted_library_members() {
+        assert_eq!(OrphanedVi.default_severity(), Severity::Error);
+        for (orphaned_vi, expected) in [(None, false), (Some(false), false), (Some(true), true)] {
+            let facts = FileFacts {
+                separate_compiled_code: true,
+                has_description: None,
+                saved_version: None,
+                debugging_enabled: None,
+                has_breakpoints: None,
+                auto_error_handling: None,
+                has_password: None,
+                linked_library: None,
+                library_members: None,
+                orphaned_vi,
+            };
+            assert_eq!(OrphanedVi.check(&facts, None).is_some(), expected);
         }
     }
 }

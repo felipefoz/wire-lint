@@ -11,22 +11,35 @@ All built-ins are enabled by default. Each has a stable ID, default severity,
 and shared `enabled` and `severity` configuration options. See
 [configuration](configuration.md) for YAML examples and exit thresholds.
 
+## Rules
+
+- [separate-compiled-code](#separate-compiled-code)
+- [file-description](#file-description)
+- [saved-version](#saved-version)
+- [debugging-status](#debugging-status)
+- [no-breakpoints](#no-breakpoints)
+- [auto-error-handling](#auto-error-handling)
+- [password-set](#password-set)
+- [orphaned-vi](#orphaned-vi)
+
 ## Execution order
 
-WireLint processes discovered files sequentially, in sorted path order. For
-each file, it reads and parses the contents once into shared facts, then runs
-every enabled rule sequentially in built-in registry order before moving to
-the next file:
+WireLint reads discovered files sequentially in sorted path order, parsing each
+once into shared facts. It then runs enabled rules in file path order and
+built-in registry order:
 
 ```text
-File A: read/parse once -> Rule 1 -> Rule 2 -> ...
-File B: read/parse once -> Rule 1 -> Rule 2 -> ...
+File A: read/parse once
+File B: read/parse once
+File A: Rule 1 -> Rule 2 -> ...
+File B: Rule 1 -> Rule 2 -> ...
 ```
 
-Rules reuse the shared facts without rereading the file. Neither files nor
-rules run in parallel. A finding does not stop the remaining rules or files.
-If reading or parsing fails, WireLint records an analysis error, skips the
-rules for that file, and continues with the next file.
+Rules reuse the shared facts without rereading files. The `orphaned-vi` rule
+also compares facts across the scan before rules run. Neither files nor rules
+run in parallel. A finding does not stop other rules or files. If reading or
+parsing fails, WireLint records an analysis error and skips rules for that
+file; the remaining files are still analyzed.
 
 If all rules are disabled, discovery still runs, but file contents are not
 read or parsed. Findings and errors are reported after analysis finishes.
@@ -287,6 +300,35 @@ Use `--verbose` to show findings:
 ```text
 Example.vi: warning [password-set]: This VI has a password set. Remove it if the VI should remain editable.
 ```
+
+## `orphaned-vi`
+
+Rejects a VI that has an owning-library link but is not listed as a member by
+that library. The rule is enabled by default with `error` severity and applies
+to VI and VI-template files (`.vi`, `.vit`, `.vim`), not controls.
+
+WireLint reads the VI's `VILB` entry in its `LIvi` linker table and compares its
+relative `PTH0` owner path with the `.lvlib` files discovered in the same scan.
+It then checks the library's `Item Type="VI"` URLs, including items nested in
+folders. A VI is reported only when its referenced library is also scanned and
+does not list that VI. External, absolute/token, and unscanned library paths
+cannot be checked and are skipped.
+
+```yaml
+rules:
+  orphaned-vi:
+    enabled: true
+    severity: error
+```
+
+Use `--verbose` to show findings:
+
+```text
+orphan-vi.vi: error [orphaned-vi]: This VI points to a library that does not list it.
+```
+
+Add the VI to its owning library in LabVIEW, or remove/fix the stale library
+link. WireLint does not modify either file.
 
 ## Adding a built-in rule
 

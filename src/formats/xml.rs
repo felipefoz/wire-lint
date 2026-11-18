@@ -13,6 +13,17 @@ pub(super) fn read_facts(
     read_version: bool,
     read_description: bool,
 ) -> io::Result<FileFacts> {
+    read_facts_with_members(bytes, expected_root, read_version, read_description, false)
+}
+
+/// Reads owner facts and optionally extracts listed VI members from an `.lvlib`.
+pub(super) fn read_facts_with_members(
+    bytes: &[u8],
+    expected_root: &str,
+    read_version: bool,
+    read_description: bool,
+    read_library_members: bool,
+) -> io::Result<FileFacts> {
     let text = std::str::from_utf8(bytes)
         .map_err(|error| invalid(format!("XML must be UTF-8: {error}")))?;
     let document = roxmltree::Document::parse(text.trim_start_matches('\u{feff}'))
@@ -85,6 +96,24 @@ pub(super) fn read_facts(
     } else {
         None
     };
+    let library_members = if read_library_members && expected_root == "Library" {
+        let mut members = Vec::new();
+        for item in root
+            .descendants()
+            .filter(|node| node.has_tag_name("Item") && node.attribute("Type") == Some("VI"))
+        {
+            let url = item
+                .attribute("URL")
+                .ok_or_else(|| invalid("library VI item is missing its URL"))?;
+            if url.trim().is_empty() {
+                return Err(invalid("library VI item has an empty URL"));
+            }
+            members.push(url.to_owned());
+        }
+        Some(members)
+    } else {
+        None
+    };
     Ok(FileFacts {
         separate_compiled_code: value.unwrap_or(false),
         has_description,
@@ -93,5 +122,8 @@ pub(super) fn read_facts(
         has_breakpoints: None,
         auto_error_handling: None,
         has_password: None,
+        linked_library: None,
+        library_members,
+        orphaned_vi: None,
     })
 }

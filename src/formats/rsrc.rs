@@ -5,6 +5,7 @@
 
 use super::{FileFacts, Version, invalid};
 use std::io;
+use std::path::PathBuf;
 
 #[cfg(test)]
 pub(super) fn read_facts(
@@ -20,11 +21,23 @@ pub(super) fn read_facts(
 /// Only format 3, LBVW-created VI/control resources with one LVSR section are
 /// supported. Missing, ambiguous, or out-of-bounds requested records return
 /// an error.
+#[cfg(test)]
 pub(super) fn read_facts_with_password(
     bytes: &[u8],
     read_version: bool,
     read_description: bool,
     read_password: bool,
+) -> io::Result<FileFacts> {
+    read_facts_with_orphaned_vi(bytes, read_version, read_description, read_password, false)
+}
+
+/// Extracts an owning-library path when orphaned-VI analysis is requested.
+pub(super) fn read_facts_with_orphaned_vi(
+    bytes: &[u8],
+    read_version: bool,
+    read_description: bool,
+    read_password: bool,
+    read_orphaned_vi: bool,
 ) -> io::Result<FileFacts> {
     let first_header = slice(bytes, 0, 32)?;
     let mut header_offset = 0;
@@ -87,6 +100,8 @@ pub(super) fn read_facts_with_password(
     let mut has_password = (read_password && is_vi).then_some(false);
     let mut bdpw_seen = false;
     let mut strg = None;
+    let mut li_vi_seen = false;
+    let mut linked_library = None;
     for block in table[4..table_size].as_chunks::<12>().0 {
         if &block[..4] == b"LVSR" {
             if separate_compiled_code.is_some() || number(block, 4)? != 0 {
@@ -143,6 +158,18 @@ pub(super) fn read_facts_with_password(
                 return Err(invalid("duplicate STRG description block"));
             }
             strg = Some((number(block, 4)?, number(block, 8)?));
+        } else if read_orphaned_vi && is_vi && &block[..4] == b"LIvi" {
+            if li_vi_seen {
+                return Err(invalid("duplicate LIvi library-link block"));
+            }
+            li_vi_seen = true;
+            linked_library = read_vi_library_link(
+                table,
+                table_size,
+                data,
+                number(block, 4)?,
+                number(block, 8)?,
+            )?;
         }
     }
     let separate_compiled_code =
@@ -170,7 +197,122 @@ pub(super) fn read_facts_with_password(
         has_breakpoints,
         auto_error_handling,
         has_password,
+        linked_library,
+        library_members: None,
+        orphaned_vi: None,
     })
+}
+
+/// Reads the owning `.lvlib` path from the VI's `VILB` entry in its `LIvi` table.
+fn read_vi_library_link(
+    table: &[u8],
+    table_size: usize,
+    data: &[u8],
+    section_count_minus_one: usize,
+    section_offset: usize,
+) -> io::Result<Option<PathBuf>> {
+    let section_count = section_count_minus_one
+        .checked_add(1)
+        .ok_or_else(|| invalid("LIvi section count overflow"))?;
+    let section_table_size = section_count
+        .checked_mul(20)
+        .ok_or_else(|| invalid("LIvi section table size overflow"))?;
+    if section_offset < table_size {
+        return Err(invalid("LIvi section overlaps the block table"));
+    }
+    let sections = slice(table, section_offset, section_table_size)?;
+    let mut library_path = None;
+    let mut section_zero_seen = false;
+    for section in sections.as_chunks::<20>().0 {
+        if number(section, 0)? != 0 {
+            continue;
+        }
+        if section_zero_seen {
+            return Err(invalid("duplicate LIvi section 0"));
+        }
+        section_zero_seen = true;
+        let record_offset = number(section, 12)?;
+        let record = slice(
+            data,
+            record_offset,
+            data.len().saturating_sub(record_offset),
+        )?;
+        let payload = slice(record, 4, number(record, 0)?)?;
+        if let Some(path) = read_vilb_path(payload)?
+            && library_path.replace(path).is_some()
+        {
+            return Err(invalid("multiple owning-library paths in LIvi"));
+        }
+    }
+    if !section_zero_seen {
+        return Err(invalid("missing LIvi section 0"));
+    }
+    Ok(library_path)
+}
+
+/// Finds the relative PTH0 path attached to the VI-to-library link object.
+fn read_vilb_path(payload: &[u8]) -> io::Result<Option<PathBuf>> {
+    let mut vilb = None;
+    for (offset, tag) in payload.windows(4).enumerate() {
+        if tag == b"VILB" && vilb.replace(offset).is_some() {
+            return Err(invalid("multiple VILB entries in LIvi"));
+        }
+    }
+    let Some(vilb) = vilb else {
+        return Ok(None);
+    };
+    let path_tag = payload[vilb + 4..]
+        .windows(4)
+        .position(|tag| tag == b"PTH0")
+        .map(|offset| vilb + 4 + offset)
+        .ok_or_else(|| invalid("VILB entry is missing its PTH0 path"))?;
+    let (path_type, components) = read_pth0(payload, path_tag)?;
+    if path_type != 1 || components.is_empty() {
+        return Ok(None);
+    }
+    let mut path = PathBuf::new();
+    for component in components {
+        path.push(component);
+    }
+    Ok(Some(path))
+}
+
+/// Decodes a bounded PTH0 record without interpreting absolute/token paths.
+fn read_pth0(payload: &[u8], offset: usize) -> io::Result<(u16, Vec<String>)> {
+    if slice(payload, offset, 4)? != b"PTH0" {
+        return Err(invalid("expected PTH0 path record"));
+    }
+    let length = number(payload, offset + 4)?;
+    if length < 4 {
+        return Err(invalid("invalid PTH0 path length"));
+    }
+    let record_end = offset
+        .checked_add(8)
+        .and_then(|start| start.checked_add(length))
+        .ok_or_else(|| invalid("PTH0 path range overflow"))?;
+    slice(payload, offset, record_end - offset)?;
+    let header = slice(payload, offset + 8, 4)?;
+    let path_type = u16::from_be_bytes([header[0], header[1]]);
+    let component_count = u16::from_be_bytes([header[2], header[3]]) as usize;
+    if component_count > 128 {
+        return Err(invalid("too many PTH0 path components"));
+    }
+    let mut cursor = offset + 12;
+    let mut components = Vec::with_capacity(component_count);
+    for _ in 0..component_count {
+        let component_length = slice(payload, cursor, 1)?[0] as usize;
+        cursor += 1;
+        let component = slice(payload, cursor, component_length)?;
+        cursor += component_length;
+        let text = std::str::from_utf8(component)
+            .map(str::to_owned)
+            .unwrap_or_else(|_| component.iter().map(|byte| char::from(*byte)).collect());
+        components.push(text);
+    }
+    if cursor != record_end {
+        return Err(invalid("inconsistent PTH0 path length"));
+    }
+    Ok((path_type, components))
 }
 
 /// Reads the BDPW hash list without retaining or exposing password material.
@@ -663,6 +805,36 @@ mod tests {
         assert!(read_facts(&bytes, false, true).is_err());
         assert_eq!(
             read_facts(&bytes, false, false).unwrap().has_description,
+            None
+        );
+    }
+
+    #[test]
+    fn reads_relative_owning_library_from_the_vi_link_table() {
+        let facts = super::super::read_facts_with_orphaned_vi(
+            std::path::Path::new("orphan-vi.vi"),
+            include_bytes!("../../sandbox/orphan-vi.vi"),
+            false,
+            false,
+            false,
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            facts.linked_library,
+            Some(PathBuf::from("orphaned-example.lvlib"))
+        );
+        assert_eq!(
+            super::super::read_facts_with_orphaned_vi(
+                std::path::Path::new("ordinary.vi"),
+                &fixture(1 << 10),
+                false,
+                false,
+                false,
+                true,
+            )
+            .unwrap()
+            .linked_library,
             None
         );
     }

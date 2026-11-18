@@ -46,3 +46,7 @@ rules:
   password-set:
     enabled: true
     severity: warning
+  # Reject a VI that points to a scanned library which does not list it.
+  orphaned-vi:
+    enabled: true
+    severity: error
