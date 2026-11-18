@@ -55,6 +55,19 @@ discovery.
 threshold, so it also works without `--config`. See
 [configuration](configuration.md) and the [rule reference](rules.md).
 
+## Full scan command example
+
+The scan options can be combined in one invocation. This example loads
+`checks.yaml`, overrides its failure threshold, prints individual findings,
+and writes a GitLab code quality report:
+
+```text
+wirelint scan . --config checks.yaml --fail-on warning --verbose --format gitlab --output gl-code-quality-report.json
+```
+
+`--format` and `--output` must be used together. See [CI report files](#ci-report-files)
+for report behavior and format details.
+
 ## Output and exit statuses
 
 The terminal report starts with the number of discovered files and a message
