@@ -75,16 +75,44 @@ fn scan_lines_without_timing(stdout: &str) -> Vec<&str> {
 
 /// Constructs a format-3 VI with LVSR and, by default, a nonempty STRG description.
 fn vi_with_separation(enabled: bool, kind: &[u8; 4]) -> Vec<u8> {
-    vi_with_description(enabled, kind, Some(b"Fixture VI description"))
+    vi_with_description_and_password(enabled, kind, Some(b"Fixture VI description"), None)
 }
 
 fn vi_without_description(enabled: bool, kind: &[u8; 4]) -> Vec<u8> {
-    vi_with_description(enabled, kind, None)
+    vi_with_description_and_password(enabled, kind, None, None)
 }
 
 fn vi_with_description(enabled: bool, kind: &[u8; 4], description: Option<&[u8]>) -> Vec<u8> {
-    let block_count = if description.is_some() { 2 } else { 1 };
-    let data_size = 72 + description.map_or(0, |text| 8 + text.len());
+    vi_with_description_and_password(enabled, kind, description, None)
+}
+
+fn vi_with_password(enabled: bool, kind: &[u8; 4]) -> Vec<u8> {
+    vi_with_description_and_password(
+        enabled,
+        kind,
+        Some(b"Fixture VI description"),
+        Some(&[1; 16]),
+    )
+}
+
+fn vi_with_description_and_password(
+    enabled: bool,
+    kind: &[u8; 4],
+    description: Option<&[u8]>,
+    password_hashes: Option<&[u8]>,
+) -> Vec<u8> {
+    let description_size = description.map_or(0, |text| 8 + text.len());
+    let password_record_offset = 72 + description_size;
+    let password_size = password_hashes.map_or(0, |hashes| 4 + hashes.len());
+    let mut resources = vec![(b"LVSR", 0)];
+    if description.is_some() {
+        resources.push((b"STRG", 72));
+    }
+    if password_hashes.is_some() {
+        resources.push((b"BDPW", password_record_offset));
+    }
+    let block_count = resources.len();
+    let data_size = password_record_offset + password_size;
     let table_size = 4 + block_count * 12;
     let info_size = 52 + table_size + block_count * 20;
     let info_offset = 32 + data_size;
@@ -107,22 +135,24 @@ fn vi_with_description(enabled: bool, kind: &[u8; 4], description: Option<&[u8]>
     put_u32(&mut bytes, info_offset + 48, info_size as u32);
     let table = info_offset + 52;
     put_u32(&mut bytes, table, (block_count - 1) as u32);
-    for index in 0..block_count {
+    for (index, (id, data_offset)) in resources.iter().enumerate() {
         let entry = table + 4 + index * 12;
         let section = table + table_size + index * 20;
-        let id = if index == 0 { b"LVSR" } else { b"STRG" };
-        bytes[entry..entry + 4].copy_from_slice(id);
+        bytes[entry..entry + 4].copy_from_slice(*id);
         put_u32(&mut bytes, entry + 8, (table_size + index * 20) as u32);
         put_u32(&mut bytes, section + 4, u32::MAX);
-        if index == 1 {
-            put_u32(&mut bytes, section + 12, 72);
-        }
+        put_u32(&mut bytes, section + 12, *data_offset as u32);
     }
     if let Some(description) = description {
         let record = 32 + 72;
         put_u32(&mut bytes, record, (4 + description.len()) as u32);
         put_u32(&mut bytes, record + 4, description.len() as u32);
         bytes[record + 8..record + 8 + description.len()].copy_from_slice(description);
+    }
+    if let Some(hashes) = password_hashes {
+        let record = 32 + password_record_offset;
+        put_u32(&mut bytes, record, hashes.len() as u32);
+        bytes[record + 4..record + 4 + hashes.len()].copy_from_slice(hashes);
     }
     bytes
 }
@@ -275,6 +305,51 @@ fn breakpoints_fail_by_default_but_controls_are_not_checked() {
     ));
     assert!(!stdout.contains("without-breakpoint.vi:"));
     assert!(!stdout.contains("control.ctl:"));
+}
+
+#[test]
+fn password_findings_are_warnings_and_follow_the_failure_threshold() {
+    let directory = TestDirectory::new();
+    directory.write("protected.vi", vi_with_password(true, b"LVIN"));
+    directory.write("clear.vi", vi_with_separation(true, b"LVIN"));
+
+    let output = directory.scan(&["--verbose"]);
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Analyzed 2 file(s); 1 finding(s); 0 analysis error(s)."));
+    assert!(stdout.contains(
+        "protected.vi: warning [password-set]: This VI has a password set. Remove it if the VI should remain editable."
+    ));
+    assert!(!stdout.contains("clear.vi:"));
+
+    let output = directory.scan(&["--verbose", "--fail-on", "warning"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("protected.vi: warning [password-set]")
+    );
+
+    let config = directory.write(
+        "checks.yaml",
+        "rules:\n  password-set:\n    severity: error\n",
+    );
+    let output = directory.configured_scan(&config, &["--verbose"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("protected.vi: error [password-set]")
+    );
+
+    fs::write(&config, "rules:\n  password-set:\n    enabled: false\n").unwrap();
+    let output = directory.configured_scan(&config, &["--verbose", "--fail-on", "warning"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert!(
+        !String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("[password-set]")
+    );
 }
 
 #[test]
@@ -457,7 +532,7 @@ fn disabling_all_rules_skips_parsing() {
     directory.write("broken.vi", []);
     let config = directory.write(
         "checks.yaml",
-        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n  no-breakpoints:\n    enabled: false\n",
+        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n  no-breakpoints:\n    enabled: false\n  password-set:\n    enabled: false\n",
     );
     let output = directory.configured_scan(&config, &[]);
     assert_eq!(output.status.code(), Some(0));
@@ -594,6 +669,7 @@ fn lists_rules_and_handles_an_empty_folder() {
     assert!(rules.contains("file-description [warning]"));
     assert!(rules.contains("debugging-status [warning]"));
     assert!(rules.contains("no-breakpoints [error]"));
+    assert!(rules.contains("password-set [warning]"));
     let directory = TestDirectory::new();
     for args in [vec![], vec!["--verbose"]] {
         let output = directory.scan(&args);
@@ -865,7 +941,7 @@ fn ci_reports_cover_empty_scans_disabled_rules_and_partial_analysis_failures() {
     }
     let config = directory.write(
         "checks.yaml",
-        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n  no-breakpoints:\n    enabled: false\n",
+        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n  no-breakpoints:\n    enabled: false\n  password-set:\n    enabled: false\n",
     );
     let output = directory.configured_scan(
         &config,

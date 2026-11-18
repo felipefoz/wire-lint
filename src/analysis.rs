@@ -79,9 +79,13 @@ pub fn analyze(root: &Path, files: &[PathBuf], config: &Config) -> Report {
     let read_description = active
         .iter()
         .any(|(rule, _, _)| rule.id() == "file-description");
+    let read_password = active
+        .iter()
+        .any(|(rule, _, _)| rule.id() == "password-set");
     for path in files {
-        let result = fs::read(root.join(path))
-            .and_then(|bytes| formats::read_facts(path, &bytes, read_version, read_description));
+        let result = fs::read(root.join(path)).and_then(|bytes| {
+            formats::read_facts(path, &bytes, read_version, read_description, read_password)
+        });
         match result {
             Ok(facts) => {
                 report.analyzed += 1;

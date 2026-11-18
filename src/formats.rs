@@ -60,12 +60,15 @@ pub struct FileFacts {
     pub debugging_enabled: Option<bool>,
     /// Stored breakpoints-set flag; absent for controls and XML containers.
     pub has_breakpoints: Option<bool>,
+    /// Whether a password is set; absent for controls and XML containers.
+    pub has_password: Option<bool>,
 }
 
 /// Reads a VI-family RSRC file or an XML project/library/class document.
 ///
 /// Missing XML source-only or description properties mean false. When
 /// `read_version` is true, missing or malformed version metadata is an error.
+/// When `read_password` is true, malformed BDPW metadata is an error.
 /// Malformed documents and unsupported binary layouts return `InvalidData`,
 /// never an assumed value.
 pub fn read_facts(
@@ -73,6 +76,7 @@ pub fn read_facts(
     bytes: &[u8],
     read_version: bool,
     read_description: bool,
+    read_password: bool,
 ) -> io::Result<FileFacts> {
     let xml = path.extension().and_then(|value| value.to_str());
     match xml {
@@ -85,7 +89,7 @@ pub fn read_facts(
         Some(extension) if extension.eq_ignore_ascii_case("lvclass") => {
             xml::read_facts(bytes, "LVClass", read_version, read_description)
         }
-        _ => rsrc::read_facts(bytes, read_version, read_description),
+        _ => rsrc::read_facts_with_password(bytes, read_version, read_description, read_password),
     }
 }
 
@@ -121,6 +125,7 @@ mod tests {
                     read_facts(
                         Path::new(&format!("file.{extension}")),
                         xml.as_bytes(),
+                        false,
                         false,
                         false,
                     )
@@ -218,7 +223,8 @@ mod tests {
                         Path::new(&format!("file.{extension}")),
                         xml.as_bytes(),
                         false,
-                        true
+                        true,
+                        false
                     )
                     .unwrap()
                     .has_description,
@@ -231,7 +237,8 @@ mod tests {
                     Path::new(&format!("file.{extension}")),
                     xml.as_bytes(),
                     false,
-                    true
+                    true,
+                    false
                 )
                 .unwrap()
                 .has_description,

@@ -43,6 +43,7 @@ pub static BUILT_INS: &[&dyn Rule] = &[
     &FileDescription,
     &DebuggingStatus,
     &NoBreakpoints,
+    &PasswordSet,
 ];
 
 /// Default minimum release for saved LabVIEW files.
@@ -195,6 +196,32 @@ impl Rule for NoBreakpoints {
     }
 }
 
+/// Reports VI and template files that have a password set.
+struct PasswordSet;
+
+impl Rule for PasswordSet {
+    fn id(&self) -> &'static str {
+        "password-set"
+    }
+
+    fn description(&self) -> &'static str {
+        "Report VIs with a password set"
+    }
+
+    fn default_severity(&self) -> Severity {
+        Severity::Warning
+    }
+
+    fn check(&self, facts: &FileFacts, _options: Option<&RuleConfig>) -> Option<String> {
+        facts
+            .has_password
+            .filter(|has_password| *has_password)
+            .map(|_| {
+                "This VI has a password set. Remove it if the VI should remain editable.".to_owned()
+            })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,6 +237,7 @@ mod tests {
                     saved_version: None,
                     debugging_enabled: None,
                     has_breakpoints: None,
+                    has_password: None,
                 },
                 None
             )
@@ -223,6 +251,7 @@ mod tests {
                     saved_version: None,
                     debugging_enabled: None,
                     has_breakpoints: None,
+                    has_password: None,
                 },
                 None
             )
@@ -269,6 +298,7 @@ mod tests {
                 saved_version: Some(version),
                 debugging_enabled: None,
                 has_breakpoints: None,
+                has_password: None,
             };
             assert_eq!(rule.check(&facts, None).is_some(), violation);
         }
@@ -361,6 +391,7 @@ mod tests {
                 saved_version: Some(saved),
                 debugging_enabled: None,
                 has_breakpoints: None,
+                has_password: None,
             };
             let options = RuleConfig {
                 enabled: true,
@@ -387,6 +418,7 @@ mod tests {
                 saved_version: None,
                 debugging_enabled: None,
                 has_breakpoints: None,
+                has_password: None,
             };
             assert_eq!(rule.check(&facts, None).is_some(), violation);
         }
@@ -401,6 +433,7 @@ mod tests {
                 saved_version: None,
                 debugging_enabled,
                 has_breakpoints: None,
+                has_password: None,
             };
             assert_eq!(
                 DebuggingStatus.check(&facts, None).is_some(),
@@ -441,8 +474,25 @@ mod tests {
                 saved_version: None,
                 debugging_enabled: None,
                 has_breakpoints,
+                has_password: None,
             };
             assert_eq!(NoBreakpoints.check(&facts, None).is_some(), expected);
+        }
+    }
+
+    #[test]
+    fn password_rule_warns_only_when_a_vi_password_is_set() {
+        assert_eq!(PasswordSet.default_severity(), Severity::Warning);
+        for (has_password, expected) in [(None, false), (Some(false), false), (Some(true), true)] {
+            let facts = FileFacts {
+                separate_compiled_code: true,
+                has_description: None,
+                saved_version: None,
+                debugging_enabled: None,
+                has_breakpoints: None,
+                has_password,
+            };
+            assert_eq!(PasswordSet.check(&facts, None).is_some(), expected);
         }
     }
 }

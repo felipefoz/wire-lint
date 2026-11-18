@@ -40,6 +40,12 @@ unknown; WireLint follows pylavi's explicit breakpoint label rather than
 deriving breakpoint presence from debugging capability. No implementation
 code was copied.
 
+pylavi's
+[`TypeBDPW.has_password`](https://github.com/marcpage/pylavi/blob/main/pylavi/resource_types.py)
+compares the first BDPW hash with the empty-password marker. WireLint uses
+that documented interpretation to detect password presence without keeping
+or exposing the hash. No implementation code was copied.
+
 pylabview attributes these source files to Mefistotelis and distributes them
 under the MIT License. Refer to its
 [license](https://github.com/mefistotelis/pylabview/blob/master/LICENSE).

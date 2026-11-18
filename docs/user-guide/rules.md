@@ -239,6 +239,30 @@ Use `--verbose` to show findings:
 Example.vi: error [no-breakpoints]: Remove all block diagram breakpoints before committing this VI.
 ```
 
+## `password-set`
+
+Warns when a VI or VI template has a password set. The rule is enabled by
+default with `warning` severity and applies to `.vi`, `.vit`, and `.vim`; it
+does not apply to controls or XML project/library/class files.
+
+The reader checks the VI's `BDPW` password-hash resource against LabVIEW's
+empty-password hash marker. It does not reveal, retain, or validate a password.
+If the resource is absent, the VI is treated as having no password. Malformed
+password metadata is an analysis error when this rule is enabled.
+
+```yaml
+rules:
+  password-set:
+    enabled: true
+    severity: warning
+```
+
+Use `--verbose` to show findings:
+
+```text
+Example.vi: warning [password-set]: This VI has a password set. Remove it if the VI should remain editable.
+```
+
 ## Adding a built-in rule
 
 The [rule architecture decision](../decisions/0006-rule-runner-and-source-only-check.md)

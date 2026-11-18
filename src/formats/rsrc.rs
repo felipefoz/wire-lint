@@ -1,4 +1,4 @@
-//! Minimal bounded RSRC format-3 reader for VI settings and description facts.
+//! Minimal bounded RSRC format-3 reader for VI settings and analysis facts.
 //!
 //! Offsets and bit semantics were researched using pylabview; see
 //! THIRD_PARTY_NOTICES.md. No compiled-code blocks are interpreted or executed.
@@ -6,14 +6,25 @@
 use super::{FileFacts, Version, invalid};
 use std::io;
 
-/// Extracts VI settings from LVSR and, when requested, the first STRG description.
-///
-/// Only format 3, LBVW-created VI/control resources with one LVSR section are
-/// supported. Missing, ambiguous, or out-of-bounds records return an error.
+#[cfg(test)]
 pub(super) fn read_facts(
     bytes: &[u8],
     read_version: bool,
     read_description: bool,
+) -> io::Result<FileFacts> {
+    read_facts_with_password(bytes, read_version, read_description, false)
+}
+
+/// Extracts VI settings and requested description/password facts.
+///
+/// Only format 3, LBVW-created VI/control resources with one LVSR section are
+/// supported. Missing, ambiguous, or out-of-bounds requested records return
+/// an error.
+pub(super) fn read_facts_with_password(
+    bytes: &[u8],
+    read_version: bool,
+    read_description: bool,
+    read_password: bool,
 ) -> io::Result<FileFacts> {
     let first_header = slice(bytes, 0, 32)?;
     let mut header_offset = 0;
@@ -71,6 +82,9 @@ pub(super) fn read_facts(
     let mut saved_version = None;
     let mut debugging_enabled = None;
     let mut has_breakpoints = None;
+    let is_vi = matches!(&header[8..12], b"LVIN" | b"sVIN");
+    let mut has_password = (read_password && is_vi).then_some(false);
+    let mut bdpw_seen = false;
     let mut strg = None;
     for block in table[4..table_size].as_chunks::<12>().0 {
         if &block[..4] == b"LVSR" {
@@ -96,7 +110,7 @@ pub(super) fn read_facts(
                 return Err(invalid("truncated LVSR save record"));
             }
             separate_compiled_code = Some(number(payload, 8)? & (1 << 10) != 0);
-            if matches!(&header[8..12], b"LVIN" | b"sVIN") {
+            if is_vi {
                 let instrument_state = number(payload, 24)?;
                 debugging_enabled = Some(instrument_state & (1 << 9) != 0);
                 has_breakpoints = Some(instrument_state & 0x2000_0000 != 0);
@@ -109,6 +123,18 @@ pub(super) fn read_facts(
                     saved_version = Some(version);
                 }
             }
+        } else if read_password && is_vi && &block[..4] == b"BDPW" {
+            if bdpw_seen {
+                return Err(invalid("duplicate BDPW password block"));
+            }
+            bdpw_seen = true;
+            has_password = Some(read_bdpw_password(
+                table,
+                table_size,
+                data,
+                number(block, 4)?,
+                number(block, 8)?,
+            )?);
         } else if read_description && &block[..4] == b"STRG" {
             if strg.is_some() {
                 return Err(invalid("duplicate STRG description block"));
@@ -139,7 +165,47 @@ pub(super) fn read_facts(
         saved_version,
         debugging_enabled,
         has_breakpoints,
+        has_password,
     })
+}
+
+/// Reads the BDPW hash list without retaining or exposing password material.
+fn read_bdpw_password(
+    table: &[u8],
+    table_size: usize,
+    data: &[u8],
+    section_count_minus_one: usize,
+    section_offset: usize,
+) -> io::Result<bool> {
+    let section_count = section_count_minus_one
+        .checked_add(1)
+        .ok_or_else(|| invalid("BDPW section count overflow"))?;
+    if section_count != 1 {
+        return Err(invalid("unsupported BDPW section count"));
+    }
+    if section_offset < table_size {
+        return Err(invalid("BDPW section overlaps the block table"));
+    }
+    let section = slice(table, section_offset, 20)?;
+    if number(section, 0)? != 0 {
+        return Err(invalid("unsupported BDPW section index"));
+    }
+    let record_offset = number(section, 12)?;
+    let record = slice(
+        data,
+        record_offset,
+        data.len().saturating_sub(record_offset),
+    )?;
+    let hashes = slice(record, 4, number(record, 0)?)?;
+    if hashes.len() < 16 || hashes.len() % 16 != 0 {
+        return Err(invalid("invalid BDPW password hash list"));
+    }
+
+    const EMPTY_PASSWORD_HASH: [u8; 16] = [
+        0xd4, 0x1d, 0x8c, 0xd9, 0x8f, 0x00, 0xb2, 0x04, 0xe9, 0x80, 0x09, 0x98, 0xec, 0xf8, 0x42,
+        0x7e,
+    ];
+    Ok(hashes[..16] != EMPTY_PASSWORD_HASH)
 }
 
 /// Reads the first STRG string, which stores the owning VI's description.
@@ -253,6 +319,40 @@ mod tests {
         bytes
     }
 
+    fn fixture_with_bdpw(hashes: &[u8]) -> Vec<u8> {
+        let data_size = 72 + 4 + hashes.len();
+        let info_offset = 32 + data_size;
+        let info_size = 52 + 4 + 24 + 40;
+        let mut bytes = vec![0; info_offset + info_size];
+        for base in [0, info_offset] {
+            bytes[base..base + 16].copy_from_slice(b"RSRC\r\n\0\x03LVINLBVW");
+            put(&mut bytes, base + 16, info_offset as u32);
+            put(&mut bytes, base + 20, info_size as u32);
+            put(&mut bytes, base + 24, 32);
+            put(&mut bytes, base + 28, data_size as u32);
+        }
+        put(&mut bytes, 32, 68);
+        put(&mut bytes, 36, 0x15008000);
+        put(&mut bytes, 44, 1 << 10);
+        let bdpw_record = 32 + 72;
+        put(&mut bytes, bdpw_record, hashes.len() as u32);
+        bytes[bdpw_record + 4..bdpw_record + 4 + hashes.len()].copy_from_slice(hashes);
+
+        put(&mut bytes, info_offset + 40, 32);
+        put(&mut bytes, info_offset + 44, 52);
+        put(&mut bytes, info_offset + 48, info_size as u32);
+        let table = info_offset + 52;
+        put(&mut bytes, table, 1);
+        bytes[table + 4..table + 8].copy_from_slice(b"LVSR");
+        put(&mut bytes, table + 12, 28);
+        bytes[table + 16..table + 20].copy_from_slice(b"BDPW");
+        put(&mut bytes, table + 24, 48);
+        put(&mut bytes, table + 40 + 4, u32::MAX);
+        put(&mut bytes, table + 48 + 4, u32::MAX);
+        put(&mut bytes, table + 48 + 12, 72);
+        bytes
+    }
+
     /// Adds a format-4+ STRG section containing its first string.
     fn fixture_with_strg(flags: u32, description: &[u8]) -> Vec<u8> {
         let strg_payload_size = 4 + description.len();
@@ -313,6 +413,7 @@ mod tests {
                     std::path::Path::new(&format!("file.{extension}")),
                     &fixture(1 << 10),
                     true,
+                    false,
                     false,
                 )
                 .unwrap()
@@ -381,6 +482,54 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn reads_password_presence_from_bdpw_hashes_only_for_vi_resources() {
+        let empty_password_hash = [
+            0xd4, 0x1d, 0x8c, 0xd9, 0x8f, 0x00, 0xb2, 0x04, 0xe9, 0x80, 0x09, 0x98, 0xec, 0xf8,
+            0x42, 0x7e,
+        ];
+        let password_hash = [0x01; 16];
+        assert_eq!(
+            read_facts_with_password(&fixture(0), false, false, true)
+                .unwrap()
+                .has_password,
+            Some(false)
+        );
+        assert_eq!(
+            read_facts_with_password(&fixture_with_bdpw(&empty_password_hash), false, false, true)
+                .unwrap()
+                .has_password,
+            Some(false)
+        );
+        assert_eq!(
+            read_facts_with_password(&fixture_with_bdpw(&password_hash), false, false, true)
+                .unwrap()
+                .has_password,
+            Some(true)
+        );
+
+        for kind in [b"LVIN", b"sVIN", b"LVCC", b"sVCC"] {
+            let mut bytes = fixture_with_bdpw(&password_hash);
+            for offset in [8, 124 + 8] {
+                bytes[offset..offset + 4].copy_from_slice(kind);
+            }
+            assert_eq!(
+                read_facts_with_password(&bytes, false, false, true)
+                    .unwrap()
+                    .has_password,
+                matches!(kind, b"LVIN" | b"sVIN").then_some(true),
+                "{kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_bdpw_only_when_password_check_is_requested() {
+        let malformed = fixture_with_bdpw(&[0x01; 15]);
+        assert!(read_facts_with_password(&malformed, false, false, true).is_err());
+        assert!(read_facts_with_password(&malformed, false, false, false).is_ok());
     }
 
     #[test]

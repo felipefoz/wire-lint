@@ -38,3 +38,7 @@ rules:
   no-breakpoints:
     enabled: true
     severity: error
+  # Warn when a VI or VI template has a password set.
+  password-set:
+    enabled: true
+    severity: warning
