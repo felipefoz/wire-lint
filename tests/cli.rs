@@ -73,36 +73,62 @@ fn scan_lines_without_timing(stdout: &str) -> Vec<&str> {
         .collect()
 }
 
-/// Constructs a minimal format-3 VI with one LVSR save-record section.
+/// Constructs a format-3 VI with LVSR and, by default, a nonempty STRG description.
 fn vi_with_separation(enabled: bool, kind: &[u8; 4]) -> Vec<u8> {
-    let mut bytes = vec![0; 192];
-    for header in [0, 104] {
+    vi_with_description(enabled, kind, Some(b"Fixture VI description"))
+}
+
+fn vi_without_description(enabled: bool, kind: &[u8; 4]) -> Vec<u8> {
+    vi_with_description(enabled, kind, None)
+}
+
+fn vi_with_description(enabled: bool, kind: &[u8; 4], description: Option<&[u8]>) -> Vec<u8> {
+    let block_count = if description.is_some() { 2 } else { 1 };
+    let data_size = 72 + description.map_or(0, |text| 8 + text.len());
+    let table_size = 4 + block_count * 12;
+    let info_size = 52 + table_size + block_count * 20;
+    let info_offset = 32 + data_size;
+    let mut bytes = vec![0; info_offset + info_size];
+    for header in [0, info_offset] {
         bytes[header..header + 16].copy_from_slice(b"RSRC\r\n\0\x03LVINLBVW");
         bytes[header + 8..header + 12].copy_from_slice(kind);
+        put_u32(&mut bytes, header + 16, info_offset as u32);
+        put_u32(&mut bytes, header + 20, info_size as u32);
+        put_u32(&mut bytes, header + 24, 32);
+        put_u32(&mut bytes, header + 28, data_size as u32);
     }
     let flags: u32 = if enabled { 1 << 10 } else { 0 };
-    for (offset, value) in [
-        (16, 104_u32),
-        (20, 88),
-        (24, 32),
-        (28, 72),
-        (32, 68),
-        (36, 0x20008000),
-        (44, flags),
-        (120, 104),
-        (124, 88),
-        (128, 32),
-        (132, 72),
-        (144, 32),
-        (148, 52),
-        (152, 88),
-        (168, 16),
-        (176, u32::MAX),
-    ] {
-        bytes[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
+    put_u32(&mut bytes, 32, 68);
+    put_u32(&mut bytes, 36, 0x20008000);
+    put_u32(&mut bytes, 44, flags);
+
+    put_u32(&mut bytes, info_offset + 40, 32);
+    put_u32(&mut bytes, info_offset + 44, 52);
+    put_u32(&mut bytes, info_offset + 48, info_size as u32);
+    let table = info_offset + 52;
+    put_u32(&mut bytes, table, (block_count - 1) as u32);
+    for index in 0..block_count {
+        let entry = table + 4 + index * 12;
+        let section = table + table_size + index * 20;
+        let id = if index == 0 { b"LVSR" } else { b"STRG" };
+        bytes[entry..entry + 4].copy_from_slice(id);
+        put_u32(&mut bytes, entry + 8, (table_size + index * 20) as u32);
+        put_u32(&mut bytes, section + 4, u32::MAX);
+        if index == 1 {
+            put_u32(&mut bytes, section + 12, 72);
+        }
     }
-    bytes[160..164].copy_from_slice(b"LVSR");
+    if let Some(description) = description {
+        let record = 32 + 72;
+        put_u32(&mut bytes, record, (4 + description.len()) as u32);
+        put_u32(&mut bytes, record + 4, description.len() as u32);
+        bytes[record + 8..record + 8 + description.len()].copy_from_slice(description);
+    }
     bytes
+}
+
+fn put_u32(bytes: &mut [u8], offset: usize, value: u32) {
+    bytes[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
 }
 
 #[test]
@@ -138,14 +164,17 @@ fn scans_binary_flags_across_the_vi_family_without_modifying_files() {
 #[test]
 fn scans_xml_and_applies_yaml_severity_and_cli_threshold() {
     let directory = TestDirectory::new();
-    directory.write("a.lvproj", r#"<Project LVVersion="20008000"/>"#);
+    directory.write(
+        "a.lvproj",
+        r#"<Project LVVersion="20008000"><Property Name="NI.Project.Description" Type="Str">Project documentation</Property></Project>"#,
+    );
     directory.write(
         "b.LVCLASS",
-        r#"<LVClass LVVersion="20008000"><Property Name="NI.LV.All.SourceOnly" Type="Bool">true</Property></LVClass>"#,
+        r#"<LVClass LVVersion="20008000"><Property Name="NI.LV.All.SourceOnly" Type="Bool">true</Property><Property Name="NI.Lib.Description" Type="Str">Class documentation</Property></LVClass>"#,
     );
     directory.write(
         "c.lvlib",
-        r#"<Library LVVersion="20008000"><Property Name="NI.LV.All.SourceOnly" Type="Bool">false</Property></Library>"#,
+        r#"<Library LVVersion="20008000"><Property Name="NI.LV.All.SourceOnly" Type="Bool">false</Property><Property Name="NI.Lib.Description" Type="Str">Library documentation</Property></Library>"#,
     );
     let output = directory.scan(&[]);
     let stdout = String::from_utf8(output.stdout).unwrap();
@@ -223,10 +252,68 @@ fn scans_xml_and_applies_yaml_severity_and_cli_threshold() {
 }
 
 #[test]
+fn file_description_checks_every_supported_labview_extension() {
+    let directory = TestDirectory::new();
+    let config = directory.write(
+        "checks.yaml",
+        "rules:\n  separate-compiled-code:\n    enabled: false\n  minimum-saved-version:\n    enabled: false\n  file-description:\n    enabled: true\n",
+    );
+    for (extension, kind) in [
+        ("vi", b"LVIN"),
+        ("vit", b"sVIN"),
+        ("vim", b"LVIN"),
+        ("ctl", b"LVCC"),
+    ] {
+        directory.write(
+            &format!("documented.{extension}"),
+            vi_with_description(true, kind, Some(b"File description")),
+        );
+        directory.write(
+            &format!("undocumented.{extension}"),
+            vi_without_description(true, kind),
+        );
+    }
+    for (extension, root, property) in [
+        ("lvproj", "Project", "NI.Project.Description"),
+        ("lvclass", "LVClass", "NI.Lib.Description"),
+        ("lvlib", "Library", "NI.Lib.Description"),
+    ] {
+        directory.write(
+            &format!("documented.{extension}"),
+            format!("<{root}><Property Name=\"{property}\" Type=\"Str\">File description</Property></{root}>"),
+        );
+        directory.write(&format!("undocumented.{extension}"), format!("<{root}/>"));
+    }
+
+    let output = directory.configured_scan(&config, &["--verbose", "--fail-on", "warning"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Analyzed 14 file(s); 7 finding(s); 0 analysis error(s)."));
+    for extension in ["vi", "vit", "vim", "ctl", "lvproj", "lvclass", "lvlib"] {
+        assert!(
+            stdout.contains(&format!(
+                "undocumented.{extension}: warning [file-description]"
+            )),
+            "{stdout}"
+        );
+        assert!(
+            !stdout
+                .lines()
+                .any(|line| line.starts_with(&format!("documented.{extension}:"))),
+            "{stdout}"
+        );
+    }
+}
+
+#[test]
 fn analysis_errors_are_explicit_and_do_not_stop_other_files() {
     let directory = TestDirectory::new();
     directory.write("a.vi", b"not an RSRC file");
-    directory.write("b.lvproj", r#"<Project LVVersion="20008000"/>"#);
+    directory.write(
+        "b.lvproj",
+        r#"<Project LVVersion="20008000"><Property Name="NI.Project.Description" Type="Str">Project documentation</Property></Project>"#,
+    );
     directory.write("c.lvlib", "<Library>");
     let output = directory.scan(&["--fail-on", "none"]);
     assert_eq!(output.status.code(), Some(2));
@@ -254,7 +341,7 @@ fn disabling_all_rules_skips_parsing() {
     directory.write("broken.vi", []);
     let config = directory.write(
         "checks.yaml",
-        "rules:\n  separate-compiled-code:\n    enabled: false\n  minimum-saved-version:\n    enabled: false\n",
+        "rules:\n  separate-compiled-code:\n    enabled: false\n  minimum-saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n",
     );
     let output = directory.configured_scan(&config, &[]);
     assert_eq!(output.status.code(), Some(0));
@@ -274,7 +361,7 @@ fn passing_scan_omits_empty_breakdowns_in_both_modes() {
     let directory = TestDirectory::new();
     directory.write(
         "passing.lvproj",
-        r#"<Project LVVersion="20008000"><Property Name="NI.LV.All.SourceOnly" Type="Bool">true</Property></Project>"#,
+        r#"<Project LVVersion="20008000"><Property Name="NI.LV.All.SourceOnly" Type="Bool">true</Property><Property Name="NI.Project.Description" Type="Str">Project documentation</Property></Project>"#,
     );
     for args in [vec![], vec!["--verbose"]] {
         let output = directory.scan(&args);
@@ -306,16 +393,16 @@ fn template_excludes_git_and_labview_environments_before_analysis() {
     fs::create_dir(directory.0.join(".git-backup")).unwrap();
     directory.write(
         "root.lvproj",
-        r#"<Project LVVersion="20008000"><Property Name="NI.LV.All.SourceOnly" Type="Bool">true</Property></Project>"#,
+        r#"<Project LVVersion="20008000"><Property Name="NI.LV.All.SourceOnly" Type="Bool">true</Property><Property Name="NI.Project.Description" Type="Str">Project documentation</Property></Project>"#,
     );
     fs::write(
         nested.join("nested.lvlib"),
-        r#"<Library LVVersion="20008000"><Property Name="NI.LV.All.SourceOnly" Type="Bool">true</Property></Library>"#,
+        r#"<Library LVVersion="20008000"><Property Name="NI.LV.All.SourceOnly" Type="Bool">true</Property><Property Name="NI.Lib.Description" Type="Str">Library documentation</Property></Library>"#,
     )
     .unwrap();
     fs::write(
         directory.0.join(".git-backup").join("kept.lvproj"),
-        r#"<Project LVVersion="20008000"/>"#,
+        r#"<Project LVVersion="20008000"><Property Name="NI.Project.Description" Type="Str">Project documentation</Property></Project>"#,
     )
     .unwrap();
 
@@ -387,6 +474,7 @@ fn lists_rules_and_handles_an_empty_folder() {
     let rules = String::from_utf8(output.stdout).unwrap();
     assert!(rules.contains("separate-compiled-code [warning]"));
     assert!(rules.contains("minimum-saved-version [warning]"));
+    assert!(rules.contains("file-description [warning]"));
     let directory = TestDirectory::new();
     for args in [vec![], vec!["--verbose"]] {
         let output = directory.scan(&args);
@@ -414,7 +502,7 @@ fn saved_version_rule_checks_files_and_respects_configuration() {
     directory.write("old.lvlib", r#"<Library LVVersion="19008000"/>"#);
     let config = directory.write(
         "checks.yaml",
-        "rules:\n  separate-compiled-code:\n    enabled: false\n",
+        "rules:\n  separate-compiled-code:\n    enabled: false\n  file-description:\n    enabled: false\n",
     );
     let output = directory.configured_scan(&config, &["--verbose", "--fail-on", "warning"]);
     assert_eq!(output.status.code(), Some(1));
@@ -424,14 +512,14 @@ fn saved_version_rule_checks_files_and_respects_configuration() {
     assert!(!text.contains("equal.lvproj:"));
     assert!(!text.contains("newer.lvclass:"));
 
-    fs::write(&config, "rules:\n  separate-compiled-code:\n    enabled: false\n  minimum-saved-version:\n    minimum-version: '20.1'\n").unwrap();
+    fs::write(&config, "rules:\n  separate-compiled-code:\n    enabled: false\n  file-description:\n    enabled: false\n  minimum-saved-version:\n    minimum-version: '20.1'\n").unwrap();
     let output = directory.configured_scan(&config, &["--verbose"]);
     assert_eq!(output.status.code(), Some(0));
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(text.contains("equal.lvproj: warning [minimum-saved-version]: Saved LabVIEW version 20.0 is below the minimum 20.1."));
     assert!(!text.contains("newer.lvclass:"));
 
-    fs::write(&config, "rules:\n  separate-compiled-code:\n    enabled: false\n  minimum-saved-version:\n    minimum-version: '21.0'\n    severity: error\n").unwrap();
+    fs::write(&config, "rules:\n  separate-compiled-code:\n    enabled: false\n  file-description:\n    enabled: false\n  minimum-saved-version:\n    minimum-version: '21.0'\n    severity: error\n").unwrap();
     let output = directory.configured_scan(&config, &["--verbose"]);
     assert_eq!(output.status.code(), Some(1));
     let text = String::from_utf8(output.stdout).unwrap();
@@ -448,7 +536,7 @@ fn saved_version_rule_checks_files_and_respects_configuration() {
     );
     fs::write(
         &config,
-        "rules:\n  minimum-saved-version:\n    enabled: false\n",
+        "rules:\n  minimum-saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n",
     )
     .unwrap();
     let output = directory.configured_scan(&config, &[]);
@@ -550,7 +638,10 @@ fn ci_reports_cover_empty_scans_disabled_rules_and_partial_analysis_failures() {
         }
     }
     directory.write("broken.vi", b"not an RSRC file");
-    directory.write("finding.lvproj", r#"<Project LVVersion="20008000"/>"#);
+    directory.write(
+        "finding.lvproj",
+        r#"<Project LVVersion="20008000"><Property Name="NI.Project.Description" Type="Str">Description</Property></Project>"#,
+    );
     for format in ["gitlab", "sarif"] {
         let output = directory.scan(&[
             "--format",
@@ -586,7 +677,7 @@ fn ci_reports_cover_empty_scans_disabled_rules_and_partial_analysis_failures() {
     }
     let config = directory.write(
         "checks.yaml",
-        "rules:\n  separate-compiled-code:\n    enabled: false\n  minimum-saved-version:\n    enabled: false\n",
+        "rules:\n  separate-compiled-code:\n    enabled: false\n  minimum-saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n",
     );
     let output = directory.configured_scan(
         &config,

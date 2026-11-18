@@ -1,0 +1,93 @@
+//! Extracts shared analysis facts from LabVIEW project, library, and class XML.
+
+use super::{FileFacts, Version, invalid};
+use std::io;
+
+/// Reads the document owner's properties without inspecting nested items.
+///
+/// Requested malformed metadata is reported as `InvalidData`; absent optional
+/// properties retain the format's existing false or `None` semantics.
+pub(super) fn read_facts(
+    bytes: &[u8],
+    expected_root: &str,
+    read_version: bool,
+    read_description: bool,
+) -> io::Result<FileFacts> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|error| invalid(format!("XML must be UTF-8: {error}")))?;
+    let document = roxmltree::Document::parse(text.trim_start_matches('\u{feff}'))
+        .map_err(|error| invalid(format!("invalid XML: {error}")))?;
+    let root = document.root_element();
+    if !root.has_tag_name(expected_root) {
+        return Err(invalid(format!("expected XML root {expected_root}")));
+    }
+
+    let mut value = None;
+    for property in root.children().filter(|node| {
+        node.has_tag_name("Property") && node.attribute("Name") == Some("NI.LV.All.SourceOnly")
+    }) {
+        if value.is_some() {
+            return Err(invalid("duplicate NI.LV.All.SourceOnly property"));
+        }
+        if property.attribute("Type") != Some("Bool")
+            || property.children().any(|node| node.is_element())
+        {
+            return Err(invalid("NI.LV.All.SourceOnly must be a Bool property"));
+        }
+        let text: String = property
+            .children()
+            .filter_map(|node| node.text().filter(|_| node.is_text()))
+            .collect();
+        value = Some(match text.trim() {
+            "true" => true,
+            "false" => false,
+            _ => return Err(invalid("NI.LV.All.SourceOnly must be true or false")),
+        });
+    }
+    let saved_version = if read_version {
+        let stamp = root
+            .attribute("LVVersion")
+            .ok_or_else(|| invalid("missing root LVVersion attribute"))?;
+        if !(7..=8).contains(&stamp.len()) || !stamp.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(invalid("invalid root LVVersion attribute"));
+        }
+        let word = u32::from_str_radix(stamp, 16)
+            .map_err(|_| invalid("invalid root LVVersion attribute"))?;
+        Some(Version::from_word(word)?)
+    } else {
+        None
+    };
+    let has_description = if read_description {
+        let property_name = if expected_root == "Project" {
+            "NI.Project.Description"
+        } else {
+            "NI.Lib.Description"
+        };
+        let mut value = None;
+        for property in root.children().filter(|node| {
+            node.has_tag_name("Property") && node.attribute("Name") == Some(property_name)
+        }) {
+            if value.is_some() {
+                return Err(invalid(format!("duplicate {property_name} property")));
+            }
+            if property.attribute("Type") != Some("Str")
+                || property.children().any(|node| node.is_element())
+            {
+                return Err(invalid(format!("{property_name} must be a Str property")));
+            }
+            let text: String = property
+                .children()
+                .filter_map(|node| node.text().filter(|_| node.is_text()))
+                .collect();
+            value = Some(!text.trim().is_empty());
+        }
+        Some(value.unwrap_or(false))
+    } else {
+        None
+    };
+    Ok(FileFacts {
+        separate_compiled_code: value.unwrap_or(false),
+        has_description,
+        saved_version,
+    })
+}

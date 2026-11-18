@@ -1,6 +1,7 @@
-//! Read-only extraction of analysis facts from LabVIEW documents.
+//! Shared facts and dispatch for native VI/RSRC and XML LabVIEW formats.
 
 mod rsrc;
+mod xml;
 
 use std::io;
 use std::path::Path;
@@ -53,80 +54,35 @@ impl std::fmt::Display for Version {
 #[derive(Debug)]
 pub struct FileFacts {
     pub separate_compiled_code: bool,
+    pub has_description: Option<bool>,
     pub saved_version: Option<Version>,
 }
 
 /// Reads a VI-family RSRC file or an XML project/library/class document.
 ///
-/// Missing XML source-only properties mean false. When `read_version` is true,
-/// missing or malformed version metadata is an error. Malformed documents and
-/// unsupported binary layouts return `InvalidData`, never an assumed value.
-pub fn read_facts(path: &Path, bytes: &[u8], read_version: bool) -> io::Result<FileFacts> {
+/// Missing XML source-only or description properties mean false. When
+/// `read_version` is true, missing or malformed version metadata is an error.
+/// Malformed documents and unsupported binary layouts return `InvalidData`,
+/// never an assumed value.
+pub fn read_facts(
+    path: &Path,
+    bytes: &[u8],
+    read_version: bool,
+    read_description: bool,
+) -> io::Result<FileFacts> {
     let xml = path.extension().and_then(|value| value.to_str());
     match xml {
         Some(extension) if extension.eq_ignore_ascii_case("lvproj") => {
-            read_xml(bytes, "Project", read_version)
+            xml::read_facts(bytes, "Project", read_version, read_description)
         }
         Some(extension) if extension.eq_ignore_ascii_case("lvlib") => {
-            read_xml(bytes, "Library", read_version)
+            xml::read_facts(bytes, "Library", read_version, read_description)
         }
         Some(extension) if extension.eq_ignore_ascii_case("lvclass") => {
-            read_xml(bytes, "LVClass", read_version)
+            xml::read_facts(bytes, "LVClass", read_version, read_description)
         }
-        _ => rsrc::read_facts(bytes, read_version),
+        _ => rsrc::read_facts(bytes, read_version, read_description),
     }
-}
-
-/// Reads only the document owner's property, not nested items' properties.
-fn read_xml(bytes: &[u8], expected_root: &str, read_version: bool) -> io::Result<FileFacts> {
-    let text = std::str::from_utf8(bytes)
-        .map_err(|error| invalid(format!("XML must be UTF-8: {error}")))?;
-    let document = roxmltree::Document::parse(text.trim_start_matches('\u{feff}'))
-        .map_err(|error| invalid(format!("invalid XML: {error}")))?;
-    let root = document.root_element();
-    if !root.has_tag_name(expected_root) {
-        return Err(invalid(format!("expected XML root {expected_root}")));
-    }
-
-    let mut value = None;
-    for property in root.children().filter(|node| {
-        node.has_tag_name("Property") && node.attribute("Name") == Some("NI.LV.All.SourceOnly")
-    }) {
-        if value.is_some() {
-            return Err(invalid("duplicate NI.LV.All.SourceOnly property"));
-        }
-        if property.attribute("Type") != Some("Bool")
-            || property.children().any(|node| node.is_element())
-        {
-            return Err(invalid("NI.LV.All.SourceOnly must be a Bool property"));
-        }
-        let text: String = property
-            .children()
-            .filter_map(|node| node.text().filter(|_| node.is_text()))
-            .collect();
-        value = Some(match text.trim() {
-            "true" => true,
-            "false" => false,
-            _ => return Err(invalid("NI.LV.All.SourceOnly must be true or false")),
-        });
-    }
-    let saved_version = if read_version {
-        let stamp = root
-            .attribute("LVVersion")
-            .ok_or_else(|| invalid("missing root LVVersion attribute"))?;
-        if !(7..=8).contains(&stamp.len()) || !stamp.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(invalid("invalid root LVVersion attribute"));
-        }
-        let word = u32::from_str_radix(stamp, 16)
-            .map_err(|_| invalid("invalid root LVVersion attribute"))?;
-        Some(Version::from_word(word)?)
-    } else {
-        None
-    };
-    Ok(FileFacts {
-        separate_compiled_code: value.unwrap_or(false),
-        saved_version,
-    })
 }
 
 /// Creates a contextual format error without substituting a setting value.
@@ -161,7 +117,8 @@ mod tests {
                     read_facts(
                         Path::new(&format!("file.{extension}")),
                         xml.as_bytes(),
-                        false
+                        false,
+                        false,
                     )
                     .unwrap()
                     .separate_compiled_code,
@@ -178,13 +135,13 @@ mod tests {
             <Item><Property Name="NI.LV.All.SourceOnly" Type="Bool">true</Property></Item>
         </Project>"#;
         assert!(
-            !read_xml(xml, "Project", false)
+            !xml::read_facts(xml, "Project", false, false)
                 .unwrap()
                 .separate_compiled_code
         );
-        assert!(read_xml(
+        assert!(xml::read_facts(
             br#"<Project><Property Name="NI.LV.All.Source&#79;nly" Type="Bool">true</Property></Project>"#,
-            "Project", false
+            "Project", false, false
         ).unwrap().separate_compiled_code);
     }
 
@@ -199,7 +156,10 @@ mod tests {
             r#"<Project><Property Name="NI.LV.All.SourceOnly" Type="Bool">true<Item/></Property></Project>"#,
             r#"<Project><Property Name="NI.LV.All.SourceOnly" Type="Bool">false</Property><Property Name="NI.LV.All.SourceOnly" Type="Bool">true</Property></Project>"#,
         ] {
-            assert!(read_xml(xml.as_bytes(), "Project", false).is_err(), "{xml}");
+            assert!(
+                xml::read_facts(xml.as_bytes(), "Project", false, false).is_err(),
+                "{xml}"
+            );
         }
     }
 
@@ -213,7 +173,7 @@ mod tests {
         ] {
             let xml = format!(r#"<Project LVVersion="{stamp}"/>"#);
             assert_eq!(
-                read_xml(xml.as_bytes(), "Project", true)
+                xml::read_facts(xml.as_bytes(), "Project", true, false)
                     .unwrap()
                     .saved_version,
                 Some(Version { major, minor })
@@ -227,8 +187,86 @@ mod tests {
             r#"<Project LVVersion="100000000"/>"#,
             r#"<Project LVVersion="2a008000"/>"#,
         ] {
-            assert!(read_xml(xml.as_bytes(), "Project", true).is_err(), "{xml}");
-            assert!(read_xml(xml.as_bytes(), "Project", false).is_ok(), "{xml}");
+            assert!(
+                xml::read_facts(xml.as_bytes(), "Project", true, false).is_err(),
+                "{xml}"
+            );
+            assert!(
+                xml::read_facts(xml.as_bytes(), "Project", false, false).is_ok(),
+                "{xml}"
+            );
         }
+    }
+
+    #[test]
+    fn reads_nonempty_owner_descriptions_for_all_xml_extensions() {
+        for (extension, root, property) in [
+            ("lvproj", "Project", "NI.Project.Description"),
+            ("lvlib", "Library", "NI.Lib.Description"),
+            ("lvclass", "LVClass", "NI.Lib.Description"),
+        ] {
+            for (content, expected) in [("", false), (" \n\t ", false), ("A description.", true)] {
+                let xml = format!(
+                    r#"<{root}><Property Name="{property}" Type="Str">{content}</Property></{root}>"#
+                );
+                assert_eq!(
+                    read_facts(
+                        Path::new(&format!("file.{extension}")),
+                        xml.as_bytes(),
+                        false,
+                        true
+                    )
+                    .unwrap()
+                    .has_description,
+                    Some(expected)
+                );
+            }
+            let xml = format!("<{root}/>");
+            assert_eq!(
+                read_facts(
+                    Path::new(&format!("file.{extension}")),
+                    xml.as_bytes(),
+                    false,
+                    true
+                )
+                .unwrap()
+                .has_description,
+                Some(false)
+            );
+        }
+    }
+
+    #[test]
+    fn ignores_nested_descriptions_and_rejects_malformed_owner_descriptions() {
+        assert_eq!(
+            xml::read_facts(
+                br#"<Project><Item><Property Name="NI.Project.Description" Type="Str">Nested</Property></Item></Project>"#,
+                "Project",
+                false,
+                true
+            )
+            .unwrap()
+            .has_description,
+            Some(false)
+        );
+        for xml in [
+            r#"<Project><Property Name="NI.Project.Description" Type="Bool">true</Property></Project>"#,
+            r#"<Project><Property Name="NI.Project.Description" Type="Str">A</Property><Property Name="NI.Project.Description" Type="Str">B</Property></Project>"#,
+            r#"<Project><Property Name="NI.Project.Description" Type="Str"><String>A</String></Property></Project>"#,
+        ] {
+            assert!(
+                xml::read_facts(xml.as_bytes(), "Project", false, true).is_err(),
+                "{xml}"
+            );
+        }
+        assert!(
+            xml::read_facts(
+                r#"<Project><Property Name="NI.Project.Description" Type="Bool">true</Property></Project>"#.as_bytes(),
+                "Project",
+                false,
+                false
+            )
+            .is_ok()
+        );
     }
 }

@@ -37,7 +37,11 @@ pub trait Rule: Sync {
 }
 
 /// All built-in rules; add new implementations here without changing the runner.
-pub static BUILT_INS: &[&dyn Rule] = &[&SeparateCompiledCode, &MinimumSavedVersion];
+pub static BUILT_INS: &[&dyn Rule] = &[
+    &SeparateCompiledCode,
+    &MinimumSavedVersion,
+    &FileDescription,
+];
 
 /// Default minimum release for saved LabVIEW files.
 pub const DEFAULT_MINIMUM_VERSION: Version = Version {
@@ -95,6 +99,30 @@ impl Rule for MinimumSavedVersion {
     }
 }
 
+/// Requires the file owner's native description to contain non-whitespace text.
+struct FileDescription;
+
+impl Rule for FileDescription {
+    fn id(&self) -> &'static str {
+        "file-description"
+    }
+
+    fn description(&self) -> &'static str {
+        "Require a non-empty description for each LabVIEW file"
+    }
+
+    fn default_severity(&self) -> Severity {
+        Severity::Warning
+    }
+
+    fn check(&self, facts: &FileFacts, _options: Option<&RuleConfig>) -> Option<String> {
+        (!facts
+            .has_description
+            .expect("active file-description rule requires a description fact"))
+        .then(|| "Add a non-empty description to this LabVIEW file.".to_owned())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,6 +134,7 @@ mod tests {
             rule.check(
                 &FileFacts {
                     separate_compiled_code: false,
+                    has_description: None,
                     saved_version: None,
                 },
                 None
@@ -116,6 +145,7 @@ mod tests {
             rule.check(
                 &FileFacts {
                     separate_compiled_code: true,
+                    has_description: None,
                     saved_version: None,
                 },
                 None
@@ -159,7 +189,21 @@ mod tests {
         ] {
             let facts = FileFacts {
                 separate_compiled_code: true,
+                has_description: None,
                 saved_version: Some(version),
+            };
+            assert_eq!(rule.check(&facts, None).is_some(), violation);
+        }
+    }
+
+    #[test]
+    fn reports_missing_or_blank_file_descriptions() {
+        let rule = &FileDescription;
+        for (has_description, violation) in [(Some(false), true), (Some(true), false)] {
+            let facts = FileFacts {
+                separate_compiled_code: true,
+                has_description,
+                saved_version: None,
             };
             assert_eq!(rule.check(&facts, None).is_some(), violation);
         }

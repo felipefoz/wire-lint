@@ -76,9 +76,12 @@ pub fn analyze(root: &Path, files: &[PathBuf], config: &Config) -> Report {
     let read_version = active
         .iter()
         .any(|(rule, _, _)| rule.id() == "minimum-saved-version");
+    let read_description = active
+        .iter()
+        .any(|(rule, _, _)| rule.id() == "file-description");
     for path in files {
         let result = fs::read(root.join(path))
-            .and_then(|bytes| formats::read_facts(path, &bytes, read_version));
+            .and_then(|bytes| formats::read_facts(path, &bytes, read_version, read_description));
         match result {
             Ok(facts) => {
                 report.analyzed += 1;

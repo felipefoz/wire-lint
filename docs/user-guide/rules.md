@@ -101,6 +101,40 @@ wrong root elements, duplicate owner properties, wrong property types, and
 invalid Boolean values are errors. The reader extracts this setting only; it
 does not validate the contents of every unrelated RSRC resource.
 
+## `file-description`
+
+Requires a non-empty native description for each supported LabVIEW file. It
+defaults to enabled with `warning` severity and applies to `.vi`, `.vit`,
+`.vim`, `.ctl`, `.lvclass`, `.lvlib`, and `.lvproj`. Context Help is not
+required.
+
+The rule reads only the description belonging to the file itself:
+
+- **VI-family files**: the first string in the `STRG` resource is the owning
+  VI's description. An absent, empty, whitespace-only, or LabVIEW nonbreaking
+  space-only description produces a finding.
+- **Projects**: the direct owner property `NI.Project.Description`, with
+  `Type="Str"`.
+- **Libraries and classes**: the direct owner property `NI.Lib.Description`,
+  with `Type="Str"`.
+
+Missing XML properties and blank descriptions produce findings. Nested item
+properties do not count. Duplicate or malformed owner properties and malformed
+`STRG` records are analysis errors, not passing descriptions. Use
+`--verbose` to show findings, for example:
+
+```text
+Example.vi: warning [file-description]: Add a non-empty description to this LabVIEW file.
+```
+
+The rule checks the native description field only; it does not inspect VI
+Context Help or modify files.
+
+Binary descriptions are read from the first string in an uncompressed
+`STRG` section. The reader supports the corresponding string layouts for
+pre-4.0 and 4.0-or-newer LabVIEW files; unsupported or malformed records are
+analysis errors.
+
 ## `minimum-saved-version`
 
 Requires each file's saved LabVIEW major.minor release to be at least the

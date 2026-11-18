@@ -20,6 +20,9 @@ substantial text, or binary fixtures are copied into WireLint. Its committed
 RSRC test inputs are constructed synthetically. Existing external LabVIEW
 fixtures were also checked read-only during development.
 
+The VI description reader also uses pylabview's description of `STRG` resource
+sections and LabVIEW string layouts in `LVblock.py` and `LVmisc.py`.
+
 pylabview attributes these source files to Mefistotelis and distributes them
 under the MIT License. Refer to its
 [license](https://github.com/mefistotelis/pylabview/blob/master/LICENSE).

@@ -18,7 +18,13 @@ rules:
     enabled: true
     severity: warning
   # Require each file to be saved in this LabVIEW release or newer.
+  # the equivalent editor-version setting on projects, libraries, and classes.
   minimum-saved-version:
     enabled: true
     severity: warning
     minimum-version: "20.0"
+  # Require a non-empty native description on every supported LabVIEW file.
+  # VI Documentation on vi-like files and description on project like files.
+  file-description:
+    enabled: true
+    severity: warning

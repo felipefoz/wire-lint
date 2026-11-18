@@ -1,4 +1,4 @@
-//! Minimal bounded RSRC format-3 reader for LVSR source-only and version facts.
+//! Minimal bounded RSRC format-3 reader for VI settings and description facts.
 //!
 //! Offsets and bit semantics were researched using pylabview; see
 //! THIRD_PARTY_NOTICES.md. No compiled-code blocks are interpreted or executed.
@@ -6,11 +6,15 @@
 use super::{FileFacts, Version, invalid};
 use std::io;
 
-/// Extracts the optional version and bit 10 of `viFlags2` from LVSR.
+/// Extracts VI settings from LVSR and, when requested, the first STRG description.
 ///
 /// Only format 3, LBVW-created VI/control resources with one LVSR section are
 /// supported. Missing, ambiguous, or out-of-bounds records return an error.
-pub(super) fn read_facts(bytes: &[u8], read_version: bool) -> io::Result<FileFacts> {
+pub(super) fn read_facts(
+    bytes: &[u8],
+    read_version: bool,
+    read_description: bool,
+) -> io::Result<FileFacts> {
     let first_header = slice(bytes, 0, 32)?;
     let mut header_offset = 0;
     let header = loop {
@@ -62,43 +66,132 @@ pub(super) fn read_facts(bytes: &[u8], read_version: bool) -> io::Result<FileFac
         .ok_or_else(|| invalid("RSRC block table size overflow"))?;
     slice(table, 0, table_size)?;
 
-    let mut facts = None;
+    let mut separate_compiled_code = None;
+    let mut file_version = None;
+    let mut saved_version = None;
+    let mut strg = None;
     for block in table[4..table_size].as_chunks::<12>().0 {
-        if &block[..4] != b"LVSR" {
-            continue;
-        }
-        if facts.is_some() || number(block, 4)? != 0 {
-            return Err(invalid("expected exactly one LVSR block and section"));
-        }
-        let section_offset = number(block, 8)?;
-        if section_offset < table_size {
-            return Err(invalid("LVSR section overlaps the block table"));
-        }
-        let section = slice(table, section_offset, 20)?;
-        if number(section, 0)? != 0 {
-            return Err(invalid("unsupported LVSR section index"));
-        }
-        let payload_offset = number(section, 12)?;
-        let record = slice(
-            data,
-            payload_offset,
-            data.len().saturating_sub(payload_offset),
-        )?;
-        let payload = slice(record, 4, number(record, 0)?)?;
-        if payload.len() < 68 {
-            return Err(invalid("truncated LVSR save record"));
-        }
-        facts = Some(FileFacts {
-            separate_compiled_code: number(payload, 8)? & (1 << 10) != 0,
-            saved_version: if read_version {
+        if &block[..4] == b"LVSR" {
+            if separate_compiled_code.is_some() || number(block, 4)? != 0 {
+                return Err(invalid("expected exactly one LVSR block and section"));
+            }
+            let section_offset = number(block, 8)?;
+            if section_offset < table_size {
+                return Err(invalid("LVSR section overlaps the block table"));
+            }
+            let section = slice(table, section_offset, 20)?;
+            if number(section, 0)? != 0 {
+                return Err(invalid("unsupported LVSR section index"));
+            }
+            let payload_offset = number(section, 12)?;
+            let record = slice(
+                data,
+                payload_offset,
+                data.len().saturating_sub(payload_offset),
+            )?;
+            let payload = slice(record, 4, number(record, 0)?)?;
+            if payload.len() < 68 {
+                return Err(invalid("truncated LVSR save record"));
+            }
+            separate_compiled_code = Some(number(payload, 8)? & (1 << 10) != 0);
+            if read_version || read_description {
                 let word = u32::from_be_bytes(payload[0..4].try_into().unwrap());
-                Some(Version::from_word(word)?)
-            } else {
-                None
-            },
-        });
+                let version = Version::from_word(word)?;
+                file_version = Some(version);
+                if read_version {
+                    saved_version = Some(version);
+                }
+            }
+        } else if read_description && &block[..4] == b"STRG" {
+            if strg.is_some() {
+                return Err(invalid("duplicate STRG description block"));
+            }
+            strg = Some((number(block, 4)?, number(block, 8)?));
+        }
     }
-    facts.ok_or_else(|| invalid("missing LVSR save record"))
+    let separate_compiled_code =
+        separate_compiled_code.ok_or_else(|| invalid("missing LVSR save record"))?;
+    let has_description = if read_description {
+        Some(match strg {
+            Some((section_count_minus_one, section_offset)) => read_strg_description(
+                table,
+                table_size,
+                data,
+                section_count_minus_one,
+                section_offset,
+                file_version.ok_or_else(|| invalid("missing LVSR version for STRG description"))?,
+            )?,
+            None => false,
+        })
+    } else {
+        None
+    };
+    Ok(FileFacts {
+        separate_compiled_code,
+        has_description,
+        saved_version,
+    })
+}
+
+/// Reads the first STRG string, which stores the owning VI's description.
+fn read_strg_description(
+    table: &[u8],
+    table_size: usize,
+    data: &[u8],
+    section_count_minus_one: usize,
+    section_offset: usize,
+    version: Version,
+) -> io::Result<bool> {
+    let section_count = section_count_minus_one
+        .checked_add(1)
+        .ok_or_else(|| invalid("STRG section count overflow"))?;
+    let section_table_size = section_count
+        .checked_mul(20)
+        .ok_or_else(|| invalid("STRG section table size overflow"))?;
+    if section_offset < table_size {
+        return Err(invalid("STRG section overlaps the block table"));
+    }
+    let sections = slice(table, section_offset, section_table_size)?;
+    let mut description_section = None;
+    for section in sections.as_chunks::<20>().0 {
+        if number(section, 0)? == 0 {
+            if description_section.is_some() {
+                return Err(invalid("duplicate STRG description section"));
+            }
+            description_section = Some(section);
+        }
+    }
+    let section = description_section.ok_or_else(|| invalid("missing STRG section 0"))?;
+    let record_offset = number(section, 12)?;
+    let record = slice(
+        data,
+        record_offset,
+        data.len().saturating_sub(record_offset),
+    )?;
+    let payload = slice(record, 4, number(record, 0)?)?;
+
+    let (count_size, length_size) = if version.major >= 4 { (0, 4) } else { (4, 1) };
+    let string_count = if count_size == 0 {
+        1
+    } else {
+        number(payload, 0)?
+    };
+    if string_count == 0 {
+        return Ok(false);
+    }
+    if string_count > payload.len().saturating_sub(count_size) / length_size {
+        return Err(invalid("truncated STRG string list"));
+    }
+    let description_length = if length_size == 4 {
+        number(payload, count_size)?
+    } else {
+        slice(payload, count_size, length_size)?[0] as usize
+    };
+    let description_offset = count_size + length_size;
+    let description = slice(payload, description_offset, description_length)?;
+    Ok(description
+        .iter()
+        .any(|byte| !byte.is_ascii_whitespace() && *byte != 0xca))
 }
 
 /// Returns a bounded byte range, rejecting overflow and truncated resources.
@@ -151,6 +244,46 @@ mod tests {
         bytes
     }
 
+    /// Adds a format-4+ STRG section containing its first string.
+    fn fixture_with_strg(flags: u32, description: &[u8]) -> Vec<u8> {
+        let strg_payload_size = 4 + description.len();
+        let data_size = 72 + 4 + strg_payload_size;
+        let info_size = 52 + 4 + 36 + 60;
+        let info_offset = 32 + data_size;
+        let mut bytes = vec![0; info_offset + info_size];
+        for base in [0, info_offset] {
+            bytes[base..base + 16].copy_from_slice(b"RSRC\r\n\0\x03LVINLBVW");
+            put(&mut bytes, base + 16, info_offset as u32);
+            put(&mut bytes, base + 20, info_size as u32);
+            put(&mut bytes, base + 24, 32);
+            put(&mut bytes, base + 28, data_size as u32);
+        }
+        put(&mut bytes, 32, 68);
+        put(&mut bytes, 36, 0x20008000);
+        put(&mut bytes, 44, flags);
+        let strg_record = 32 + 72;
+        put(&mut bytes, strg_record, strg_payload_size as u32);
+        put(&mut bytes, strg_record + 4, description.len() as u32);
+        bytes[strg_record + 8..strg_record + 8 + description.len()].copy_from_slice(description);
+
+        put(&mut bytes, info_offset + 40, 32);
+        put(&mut bytes, info_offset + 44, 52);
+        put(&mut bytes, info_offset + 48, info_size as u32);
+        let table = info_offset + 52;
+        put(&mut bytes, table, 2);
+        bytes[table + 4..table + 8].copy_from_slice(b"TEST");
+        put(&mut bytes, table + 12, 40);
+        bytes[table + 16..table + 20].copy_from_slice(b"LVSR");
+        put(&mut bytes, table + 24, 60);
+        bytes[table + 28..table + 32].copy_from_slice(b"STRG");
+        put(&mut bytes, table + 36, 80);
+        for section in [table + 40, table + 60, table + 80] {
+            put(&mut bytes, section + 4, u32::MAX);
+        }
+        put(&mut bytes, table + 92, 72);
+        bytes
+    }
+
     fn put(bytes: &mut [u8], offset: usize, value: u32) {
         bytes[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
     }
@@ -159,7 +292,7 @@ mod tests {
     fn reads_the_flag_not_the_presence_of_compiled_blocks() {
         for flags in [0, 1 << 9, 1 << 10, u32::MAX] {
             assert_eq!(
-                read_facts(&fixture(flags), true)
+                read_facts(&fixture(flags), true, false)
                     .unwrap()
                     .separate_compiled_code,
                 flags & (1 << 10) != 0
@@ -171,6 +304,7 @@ mod tests {
                     std::path::Path::new(&format!("file.{extension}")),
                     &fixture(1 << 10),
                     true,
+                    false,
                 )
                 .unwrap()
                 .separate_compiled_code
@@ -185,7 +319,11 @@ mod tests {
             for offset in [8, 104 + 8] {
                 bytes[offset..offset + 4].copy_from_slice(kind);
             }
-            assert!(read_facts(&bytes, true).unwrap().separate_compiled_code);
+            assert!(
+                read_facts(&bytes, true, false)
+                    .unwrap()
+                    .separate_compiled_code
+            );
         }
     }
 
@@ -193,7 +331,7 @@ mod tests {
     fn rejects_every_truncated_prefix_without_panicking() {
         let bytes = fixture(1 << 10);
         for length in 0..bytes.len() {
-            assert!(read_facts(&bytes[..length], true).is_err());
+            assert!(read_facts(&bytes[..length], true, false).is_err());
         }
     }
 
@@ -220,11 +358,11 @@ mod tests {
         ] {
             let mut bytes = original.clone();
             put(&mut bytes, offset, value);
-            assert!(read_facts(&bytes, true).is_err(), "offset {offset}");
+            assert!(read_facts(&bytes, true, false).is_err(), "offset {offset}");
         }
         let mut unsupported = original;
         unsupported[7] = 2;
-        assert!(read_facts(&unsupported, true).is_err());
+        assert!(read_facts(&unsupported, true, false).is_err());
     }
 
     #[test]
@@ -255,13 +393,49 @@ mod tests {
             let mut bytes = fixture(0);
             put(&mut bytes, 36, word);
             assert_eq!(
-                read_facts(&bytes, true).unwrap().saved_version,
+                read_facts(&bytes, true, false).unwrap().saved_version,
                 Some(expected)
             );
         }
         let mut bytes = fixture(0);
         put(&mut bytes, 36, 0x2a008000);
-        assert!(read_facts(&bytes, true).is_err());
-        assert!(read_facts(&bytes, false).is_ok());
+        assert!(read_facts(&bytes, true, false).is_err());
+        assert!(read_facts(&bytes, false, false).is_ok());
+    }
+
+    #[test]
+    fn reads_vi_description_from_the_first_strg_string() {
+        assert_eq!(
+            read_facts(&fixture_with_strg(0, b"VI description"), false, true)
+                .unwrap()
+                .has_description,
+            Some(true)
+        );
+        for description in [b"".as_slice(), b" \t\r\n", b"\xca"] {
+            assert_eq!(
+                read_facts(&fixture_with_strg(0, description), false, true)
+                    .unwrap()
+                    .has_description,
+                Some(false)
+            );
+        }
+        assert_eq!(
+            read_facts(&fixture(0), false, true)
+                .unwrap()
+                .has_description,
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_strg_but_skips_it_when_the_rule_is_inactive() {
+        let mut bytes = fixture_with_strg(0, b"description");
+        let description_length = 32 + 72 + 4;
+        put(&mut bytes, description_length, u32::MAX);
+        assert!(read_facts(&bytes, false, true).is_err());
+        assert_eq!(
+            read_facts(&bytes, false, false).unwrap().has_description,
+            None
+        );
     }
 }
