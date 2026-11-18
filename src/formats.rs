@@ -56,6 +56,8 @@ pub struct FileFacts {
     pub separate_compiled_code: bool,
     pub has_description: Option<bool>,
     pub saved_version: Option<Version>,
+    /// Stored DebugCapable flag; absent for controls and XML containers.
+    pub debugging_enabled: Option<bool>,
 }
 
 /// Reads a VI-family RSRC file or an XML project/library/class document.

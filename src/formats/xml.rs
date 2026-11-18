@@ -89,5 +89,6 @@ pub(super) fn read_facts(
         separate_compiled_code: value.unwrap_or(false),
         has_description,
         saved_version,
+        debugging_enabled: None,
     })
 }

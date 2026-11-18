@@ -10,7 +10,8 @@ WireLint's original Rust RSRC reader was informed by the
 - [`LVblock.py`](https://github.com/mefistotelis/pylabview/blob/master/pylabview/LVblock.py):
   block/section offsets and the LVSR save-record layout.
 - [`LVinstrument.py`](https://github.com/mefistotelis/pylabview/blob/master/pylabview/LVinstrument.py):
-  the `viFlags2` word and `SourceOnly` bit 10.
+  the `viFlags2` word and `SourceOnly` bit 10, and the `instrState` word at
+  LVSR offset 24 with `DebugCapable` bit 9.
 - [`LVmisc.py`](https://github.com/mefistotelis/pylabview/blob/master/pylabview/LVmisc.py):
   LabVIEW version-word encoding and major/minor components.
 
@@ -22,6 +23,14 @@ fixtures were also checked read-only during development.
 
 The VI description reader also uses pylabview's description of `STRG` resource
 sections and LabVIEW string layouts in `LVblock.py` and `LVmisc.py`.
+
+The debugging-status reader uses pylabview's `DebugCapable` definition.
+[pylavi's `TypeLVSR`](https://github.com/marcpage/pylavi/blob/main/pylavi/resource_types.py)
+and [validation logic](https://github.com/marcpage/pylavi/blob/main/pylavi/validate.py)
+were also consulted on 2026-11-18. pylavi's debuggable mask additionally
+includes instrument-state bit 30, which pylabview labels unknown. WireLint
+uses only pylabview's documented bit 9. No implementation code was copied
+from either project.
 
 pylabview attributes these source files to Mefistotelis and distributes them
 under the MIT License. Refer to its

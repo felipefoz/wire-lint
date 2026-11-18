@@ -69,6 +69,7 @@ pub(super) fn read_facts(
     let mut separate_compiled_code = None;
     let mut file_version = None;
     let mut saved_version = None;
+    let mut debugging_enabled = None;
     let mut strg = None;
     for block in table[4..table_size].as_chunks::<12>().0 {
         if &block[..4] == b"LVSR" {
@@ -94,6 +95,9 @@ pub(super) fn read_facts(
                 return Err(invalid("truncated LVSR save record"));
             }
             separate_compiled_code = Some(number(payload, 8)? & (1 << 10) != 0);
+            if matches!(&header[8..12], b"LVIN" | b"sVIN") {
+                debugging_enabled = Some(number(payload, 24)? & (1 << 9) != 0);
+            }
             if read_version || read_description {
                 let word = u32::from_be_bytes(payload[0..4].try_into().unwrap());
                 let version = Version::from_word(word)?;
@@ -130,6 +134,7 @@ pub(super) fn read_facts(
         separate_compiled_code,
         has_description,
         saved_version,
+        debugging_enabled,
     })
 }
 
@@ -324,6 +329,30 @@ mod tests {
                     .unwrap()
                     .separate_compiled_code
             );
+        }
+    }
+
+    #[test]
+    fn reads_debug_capable_bit_without_conflating_other_instrument_state_bits() {
+        for (state, expected) in [
+            (0, false),
+            (1 << 9, true),
+            (1 << 30, false),
+            (0x40000200, true),
+            (!(1 << 9), false),
+        ] {
+            for kind in [b"LVIN", b"sVIN", b"LVCC", b"sVCC"] {
+                let mut bytes = fixture(1 << 10);
+                put(&mut bytes, 36 + 24, state);
+                for offset in [8, 104 + 8] {
+                    bytes[offset..offset + 4].copy_from_slice(kind);
+                }
+                assert_eq!(
+                    read_facts(&bytes, false, false).unwrap().debugging_enabled,
+                    matches!(kind, b"LVIN" | b"sVIN").then_some(expected),
+                    "{kind:?}, {state:#x}"
+                );
+            }
         }
     }
 

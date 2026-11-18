@@ -1,6 +1,6 @@
 //! Built-in rule contract and registry, independent of file formats and output.
 
-use crate::config::RuleConfig;
+use crate::config::{DebuggingState, RuleConfig};
 use crate::formats::{FileFacts, Version};
 use serde::Deserialize;
 use std::fmt;
@@ -41,6 +41,7 @@ pub static BUILT_INS: &[&dyn Rule] = &[
     &SeparateCompiledCode,
     &MinimumSavedVersion,
     &FileDescription,
+    &DebuggingStatus,
 ];
 
 /// Default minimum release for saved LabVIEW files.
@@ -123,6 +124,38 @@ impl Rule for FileDescription {
     }
 }
 
+/// Reports VIs whose stored debugging state matches the configured policy.
+struct DebuggingStatus;
+
+impl Rule for DebuggingStatus {
+    fn id(&self) -> &'static str {
+        "debugging-status"
+    }
+
+    fn description(&self) -> &'static str {
+        "Check VI debugging status (default: flag debugging enabled)"
+    }
+
+    fn default_severity(&self) -> Severity {
+        Severity::Warning
+    }
+
+    fn check(&self, facts: &FileFacts, options: Option<&RuleConfig>) -> Option<String> {
+        let debugging_enabled = facts.debugging_enabled?;
+        let fail_when = options
+            .and_then(|options| options.fail_when)
+            .unwrap_or_default();
+        if debugging_enabled != (fail_when == DebuggingState::Enabled) {
+            return None;
+        }
+        Some(if debugging_enabled {
+            "Debugging is enabled. Disable Allow debugging in VI Properties > Execution.".to_owned()
+        } else {
+            "Debugging is disabled. Enable Allow debugging in VI Properties > Execution.".to_owned()
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,6 +169,7 @@ mod tests {
                     separate_compiled_code: false,
                     has_description: None,
                     saved_version: None,
+                    debugging_enabled: None,
                 },
                 None
             )
@@ -147,6 +181,7 @@ mod tests {
                     separate_compiled_code: true,
                     has_description: None,
                     saved_version: None,
+                    debugging_enabled: None,
                 },
                 None
             )
@@ -191,6 +226,7 @@ mod tests {
                 separate_compiled_code: true,
                 has_description: None,
                 saved_version: Some(version),
+                debugging_enabled: None,
             };
             assert_eq!(rule.check(&facts, None).is_some(), violation);
         }
@@ -204,8 +240,45 @@ mod tests {
                 separate_compiled_code: true,
                 has_description,
                 saved_version: None,
+                debugging_enabled: None,
             };
             assert_eq!(rule.check(&facts, None).is_some(), violation);
+        }
+    }
+
+    #[test]
+    fn debugging_policy_supports_both_states_and_skips_non_vi_files() {
+        for debugging_enabled in [None, Some(false), Some(true)] {
+            let facts = FileFacts {
+                separate_compiled_code: true,
+                has_description: None,
+                saved_version: None,
+                debugging_enabled,
+            };
+            assert_eq!(
+                DebuggingStatus.check(&facts, None).is_some(),
+                debugging_enabled == Some(true)
+            );
+            for fail_when in [DebuggingState::Enabled, DebuggingState::Disabled] {
+                let options = RuleConfig {
+                    enabled: true,
+                    severity: None,
+                    minimum_version: None,
+                    fail_when: Some(fail_when),
+                };
+                let finding = DebuggingStatus.check(&facts, Some(&options));
+                assert_eq!(
+                    finding.is_some(),
+                    debugging_enabled == Some(fail_when == DebuggingState::Enabled)
+                );
+                if let Some(message) = finding {
+                    assert!(message.contains(if fail_when == DebuggingState::Enabled {
+                        "Debugging is enabled. Disable"
+                    } else {
+                        "Debugging is disabled. Enable"
+                    }));
+                }
+            }
         }
     }
 }

@@ -162,6 +162,99 @@ fn scans_binary_flags_across_the_vi_family_without_modifying_files() {
 }
 
 #[test]
+fn debugging_status_defaults_to_enabled_and_supports_reversed_or_disabled_policy() {
+    let directory = TestDirectory::new();
+    for (extension, kind) in [("VI", b"LVIN"), ("vit", b"sVIN"), ("vim", b"LVIN")] {
+        for enabled in [false, true] {
+            let mut bytes = vi_with_separation(true, kind);
+            put_u32(&mut bytes, 36 + 24, if enabled { 1 << 9 } else { 0 });
+            directory.write(&format!("{enabled}.{extension}"), bytes);
+        }
+    }
+    let mut control = vi_with_separation(true, b"LVCC");
+    put_u32(&mut control, 36 + 24, 1 << 9);
+    directory.write("ignored.ctl", control);
+    for (extension, root) in [
+        ("lvproj", "Project"),
+        ("lvlib", "Library"),
+        ("lvclass", "LVClass"),
+    ] {
+        let property = if root == "Project" {
+            "NI.Project.Description"
+        } else {
+            "NI.Lib.Description"
+        };
+        directory.write(
+            &format!("ignored.{extension}"),
+            format!(r#"<{root} LVVersion="20008000"><Property Name="NI.LV.All.SourceOnly" Type="Bool">true</Property><Property Name="{property}" Type="Str">Description</Property></{root}>"#),
+        );
+    }
+
+    for (args, status) in [
+        (vec!["--verbose"], 0),
+        (vec!["--verbose", "--fail-on", "warning"], 1),
+    ] {
+        let output = directory.scan(&args);
+        assert_eq!(output.status.code(), Some(status));
+        assert!(output.stderr.is_empty());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            stdout.contains("Analyzed 10 file(s); 3 finding(s); 0 analysis error(s)."),
+            "{stdout}"
+        );
+        for extension in ["VI", "vit", "vim"] {
+            assert!(stdout.contains(&format!(
+                "true.{extension}: warning [debugging-status]: Debugging is enabled. Disable"
+            )));
+            assert!(!stdout.contains(&format!("false.{extension}:")));
+        }
+        assert!(!stdout.contains("ignored."));
+    }
+
+    let config = directory.write(
+        "checks.yaml",
+        "rules:\n  debugging-status:\n    fail-when: disabled\n    severity: error\n",
+    );
+    let report = directory.0.join("report.json");
+    let output = directory.configured_scan(
+        &config,
+        &[
+            "--verbose",
+            "--format",
+            "sarif",
+            "--output",
+            report.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Analyzed 10 file(s); 3 finding(s); 0 analysis error(s)."));
+    for extension in ["VI", "vit", "vim"] {
+        assert!(stdout.contains(&format!(
+            "false.{extension}: error [debugging-status]: Debugging is disabled. Enable"
+        )));
+        assert!(!stdout.contains(&format!("true.{extension}:")));
+    }
+    assert!(!stdout.contains("ignored."));
+    let json: serde_json::Value = serde_json::from_slice(&fs::read(report).unwrap()).unwrap();
+    let results = json["runs"][0]["results"].as_array().unwrap();
+    assert_eq!(results.len(), 3);
+    assert!(
+        results
+            .iter()
+            .all(|finding| finding["ruleId"] == "debugging-status" && finding["level"] == "error")
+    );
+
+    fs::write(&config, "rules:\n  debugging-status:\n    enabled: false\n").unwrap();
+    let output = directory.configured_scan(&config, &["--fail-on", "warning"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Analyzed 10 file(s); 0 finding(s); 0 analysis error(s)."));
+}
+
+#[test]
 fn scans_xml_and_applies_yaml_severity_and_cli_threshold() {
     let directory = TestDirectory::new();
     directory.write(
@@ -341,7 +434,7 @@ fn disabling_all_rules_skips_parsing() {
     directory.write("broken.vi", []);
     let config = directory.write(
         "checks.yaml",
-        "rules:\n  separate-compiled-code:\n    enabled: false\n  minimum-saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n",
+        "rules:\n  separate-compiled-code:\n    enabled: false\n  minimum-saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n",
     );
     let output = directory.configured_scan(&config, &[]);
     assert_eq!(output.status.code(), Some(0));
@@ -475,6 +568,7 @@ fn lists_rules_and_handles_an_empty_folder() {
     assert!(rules.contains("separate-compiled-code [warning]"));
     assert!(rules.contains("minimum-saved-version [warning]"));
     assert!(rules.contains("file-description [warning]"));
+    assert!(rules.contains("debugging-status [warning]"));
     let directory = TestDirectory::new();
     for args in [vec![], vec!["--verbose"]] {
         let output = directory.scan(&args);
@@ -677,7 +771,7 @@ fn ci_reports_cover_empty_scans_disabled_rules_and_partial_analysis_failures() {
     }
     let config = directory.write(
         "checks.yaml",
-        "rules:\n  separate-compiled-code:\n    enabled: false\n  minimum-saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n",
+        "rules:\n  separate-compiled-code:\n    enabled: false\n  minimum-saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n",
     );
     let output = directory.configured_scan(
         &config,

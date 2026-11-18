@@ -30,6 +30,15 @@ impl FailOn {
     }
 }
 
+/// Debugging state that produces a finding, independent of rule enablement.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum DebuggingState {
+    #[default]
+    Enabled,
+    Disabled,
+}
+
 /// Common options and validated options for individual built-in rules.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
@@ -39,6 +48,16 @@ pub struct RuleConfig {
     pub severity: Option<Severity>,
     #[serde(default, deserialize_with = "minimum_version")]
     pub minimum_version: Option<Version>,
+    #[serde(default, deserialize_with = "debugging_state")]
+    pub fail_when: Option<DebuggingState>,
+}
+
+/// Rejects explicit nulls and invalid states rather than substituting a default.
+fn debugging_state<'de, D>(deserializer: D) -> Result<Option<DebuggingState>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    DebuggingState::deserialize(deserializer).map(Some)
 }
 
 /// Accepts only a quoted major.minor string, avoiding YAML number coercion.
@@ -186,6 +205,12 @@ impl Config {
                     format!("minimum-version is not supported by rule '{id}'"),
                 ));
             }
+            if id != "debugging-status" && options.fail_when.is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("fail-when is not supported by rule '{id}'"),
+                ));
+            }
         }
         Ok(config)
     }
@@ -215,6 +240,10 @@ mod tests {
         assert_eq!(
             config.rules["minimum-saved-version"].minimum_version,
             Some(crate::rules::DEFAULT_MINIMUM_VERSION)
+        );
+        assert_eq!(
+            config.rules["debugging-status"].fail_when,
+            Some(DebuggingState::default())
         );
     }
 
@@ -333,6 +362,32 @@ mod tests {
         assert!(
             Config::parse("rules:\n  separate-compiled-code:\n    minimum-version: '20.0'\n")
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn validates_rule_specific_debugging_state() {
+        for (value, expected) in [
+            ("enabled", DebuggingState::Enabled),
+            ("disabled", DebuggingState::Disabled),
+        ] {
+            let config = Config::parse(&format!(
+                "rules:\n  debugging-status:\n    fail-when: {value}\n"
+            ))
+            .unwrap();
+            assert_eq!(config.rules["debugging-status"].fail_when, Some(expected));
+        }
+        for value in ["true", "false", "null", "0", "Enabled", "other", "[]"] {
+            assert!(
+                Config::parse(&format!(
+                    "rules:\n  debugging-status:\n    fail-when: {value}\n"
+                ))
+                .is_err(),
+                "{value}"
+            );
+        }
+        assert!(
+            Config::parse("rules:\n  separate-compiled-code:\n    fail-when: enabled\n").is_err()
         );
     }
 }

@@ -42,9 +42,11 @@ wirelint scan path/to/project --fail-on warning
 ```
 
 All built-in rules are enabled by default, with their default severities. The
-rules check compiled-code separation and a minimum saved LabVIEW version
-(default `20.0`). Both default to `warning`, so findings do not fail the
-default `error` threshold.
+rules check compiled-code separation, a minimum saved LabVIEW version
+(default `20.0`), file descriptions, and VI debugging status. All default to
+`warning`, so findings do not fail the default `error` threshold.
+The `debugging-status` rule flags debugging-enabled VIs by default.
+Set its YAML option `fail-when: disabled` to flag the opposite state.
 
 Without `--config`, WireLint uses built-in defaults; no YAML file is required.
 All rules are enabled, the failure threshold is `error`, and no folders are

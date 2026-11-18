@@ -162,6 +162,45 @@ malformed version is an analysis error while this rule is enabled; disabling
 the rule skips version validation. Each file is checked independently, not
 against its owning project, library, or class.
 
+## `debugging-status`
+
+Checks the stored **Allow debugging** setting for `.vi`, `.vit`, and `.vim`
+files. The rule is enabled by default, reports `warning` findings, and flags
+debugging when it is enabled.
+
+```yaml
+rules:
+  debugging-status:
+    enabled: true
+    severity: warning
+    fail-when: enabled
+```
+
+Set `fail-when: disabled` to flag VIs with debugging disabled instead.
+This option accepts only `enabled` or `disabled`; it is separate from the
+rule's Boolean `enabled` option. Findings follow the usual severity and
+failure-threshold policy: default warnings do not fail a scan unless
+`--fail-on warning` is used or the rule severity is changed to `error`.
+
+The reader follows pylabview's `DebugCapable` definition: bit 9
+(`0x00000200`) of the big-endian `instrState` word at offset 24 in the
+`LVSR` payload. Other instrument-state bits do not enable debugging.
+This checks the saved flag, not whether a debugging session is active.
+
+VI and VI-template resource types (`LVIN`, `sVIN`) supply the flag. Controls
+(`LVCC`, `sVCC`) and XML projects, libraries, and classes do not have an
+applicable VI execution setting and produce no findings for this rule under
+either policy. The existing RSRC format limitations and analysis-error
+handling apply; malformed save records are not treated as debugging disabled.
+
+Use `--verbose` to show findings:
+
+```text
+Example.vi: warning [debugging-status]: Debugging is enabled. Disable Allow debugging in VI Properties > Execution.
+```
+
+WireLint does not change the VI's settings.
+
 ## Adding a built-in rule
 
 The [rule architecture decision](../decisions/0006-rule-runner-and-source-only-check.md)

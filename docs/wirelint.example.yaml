@@ -28,3 +28,8 @@ rules:
   file-description:
     enabled: true
     severity: warning
+  # Report VIs with Allow debugging enabled. Use disabled to reverse the check.
+  debugging-status:
+    enabled: true
+    severity: warning
+    fail-when: enabled

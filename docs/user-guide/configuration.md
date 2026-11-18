@@ -43,6 +43,10 @@ rules:
     enabled: true
     severity: warning
     minimum-version: '20.0'
+  debugging-status:
+    enabled: true
+    severity: warning
+    fail-when: enabled
 ```
 
 | Key | Accepted values | Default |
@@ -54,6 +58,7 @@ rules:
 | `rules.<id>.enabled` | YAML Boolean | `true` |
 | `rules.<id>.severity` | `info`, `warning`, `error` | Rule default |
 | `rules.minimum-saved-version.minimum-version` | Quoted `major.minor` string | `'20.0'` |
+| `rules.debugging-status.fail-when` | `enabled`, `disabled` | `enabled` |
 
 Fields may be omitted. An omitted rule remains enabled; `rules: {}` does not
 disable built-ins. An empty options mapping also retains defaults. Use `{}`
@@ -116,6 +121,21 @@ controls whether those findings fail the scan:
 - `error`: fail for error findings.
 - `warning`: fail for warning or error findings.
 - `none`: never fail because of findings.
+
+For `debugging-status`, `enabled` controls whether the rule runs, while
+`fail-when` selects which stored debugging state produces a finding. For
+example, require debugging to be enabled and make violations fail CI:
+
+```yaml
+rules:
+  debugging-status:
+    enabled: true
+    severity: error
+    fail-when: disabled
+```
+
+By default, the rule reports debugging-enabled VIs at `warning` severity.
+Despite its name, `fail-when` does not override the severity or exit threshold.
 
 Info findings do not fail any available threshold. Configuration, discovery,
 file-read, and format errors always fail, independently of this threshold.
