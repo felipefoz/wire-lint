@@ -184,9 +184,6 @@ See [CI integration](ci-reports.md) for GitLab and GitHub upload examples.
 
 ## Deferred features
 
-General path/glob exclusions, command-line exclusion options, and a quiet mode
-are not implemented yet.
-Global diagnostic logging, including discovered-path details and per-file
-and per-rule elapsed timings, is also deferred; see the
-[output and logging decision](../decisions/0007-concise-output-and-future-logging.md).
+See the [project roadmap](../roadmap.md) for features explicitly deferred in
+the decision records.
 Use `wirelint --help` and `wirelint scan --help` for CLI help.

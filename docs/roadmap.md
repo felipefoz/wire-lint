@@ -1,0 +1,38 @@
+# Roadmap
+
+This roadmap collects future work explicitly deferred in accepted decision
+records. It is not a delivery schedule or a commitment to implement every item;
+each item needs planning before work begins. Features resolved by later
+decisions are omitted.
+
+## CLI and configuration
+
+- **Configuration discovery:** decide whether and how WireLint should discover
+  configuration automatically. Configuration is currently loaded only from an
+  explicit `--config` path. See
+  [decision 0004](decisions/0004-cli-configuration-and-reports.md) and
+  [decision 0006](decisions/0006-rule-runner-and-source-only-check.md).
+- **Flexible exclusions:** plan general path and glob matching, command-line
+  exclusions, and exclusion-list files, including their syntax and precedence
+  relative to configured literal folder exclusions. See
+  [decision 0004](decisions/0004-cli-configuration-and-reports.md) and
+  [decision 0008](decisions/0008-folder-exclusions.md).
+- **Quiet mode:** define a mode that further reduces terminal output. See
+  [decision 0009](decisions/0009-summary-verbosity-and-scan-timing.md).
+
+## Diagnostics
+
+- **Application-wide diagnostic logging:** design log levels, destinations,
+  configuration, and the diagnostic details to record. The deferred scope
+  includes discovered paths and per-file and per-rule elapsed timings; normal
+  terminal output currently omits these details. See
+  [decision 0007](decisions/0007-concise-output-and-future-logging.md) and
+  [decision 0009](decisions/0009-summary-verbosity-and-scan-timing.md).
+
+## CI reports
+
+- **Expanded report workflows:** plan support for multiple report formats in
+  one invocation, automatic repository-root detection, and direct report
+  uploads. Currently, one format can be written per invocation, callers choose
+  the scan root, and reports are written to local files. See
+  [decision 0011](decisions/0011-ci-code-quality-reports.md).
