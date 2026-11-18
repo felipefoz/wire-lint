@@ -239,6 +239,31 @@ Use `--verbose` to show findings:
 Example.vi: error [no-breakpoints]: Remove all block diagram breakpoints before committing this VI.
 ```
 
+## `auto-error-handling`
+
+Disallows automatic error handling on VIs and VI templates (`.vi`, `.vit`,
+`.vim`). It is enabled by default with `error` severity, so an enabled setting
+fails the default CI threshold. Controls and XML project, library, and class
+files have no applicable VI execution setting and are skipped.
+
+The rule reads bit 29 (`0x20000000`) of the LVSR `viFlags2` word at payload
+offset 8. This is the saved **Enable automatic error handling** setting in VI
+Properties > Execution. Disable that setting in LabVIEW and save the VI to
+resolve a finding. WireLint does not change the setting.
+
+```yaml
+rules:
+  auto-error-handling:
+    enabled: true
+    severity: error
+```
+
+Use `--verbose` to show findings:
+
+```text
+Example.vi: error [auto-error-handling]: Automatic error handling is enabled. Disable 'Enable automatic error handling' in VI Properties > Execution.
+```
+
 ## `password-set`
 
 Warns when a VI or VI template has a password set. The rule is enabled by

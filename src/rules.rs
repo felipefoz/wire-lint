@@ -43,6 +43,7 @@ pub static BUILT_INS: &[&dyn Rule] = &[
     &FileDescription,
     &DebuggingStatus,
     &NoBreakpoints,
+    &AutoErrorHandling,
     &PasswordSet,
 ];
 
@@ -196,6 +197,32 @@ impl Rule for NoBreakpoints {
     }
 }
 
+/// Rejects VIs saved with automatic error handling enabled.
+struct AutoErrorHandling;
+
+impl Rule for AutoErrorHandling {
+    fn id(&self) -> &'static str {
+        "auto-error-handling"
+    }
+
+    fn description(&self) -> &'static str {
+        "Disallow automatic error handling"
+    }
+
+    fn default_severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn check(&self, facts: &FileFacts, _options: Option<&RuleConfig>) -> Option<String> {
+        facts
+            .auto_error_handling
+            .filter(|enabled| *enabled)
+            .map(|_| {
+                "Automatic error handling is enabled. Disable 'Enable automatic error handling' in VI Properties > Execution.".to_owned()
+            })
+    }
+}
+
 /// Reports VI and template files that have a password set.
 struct PasswordSet;
 
@@ -237,6 +264,7 @@ mod tests {
                     saved_version: None,
                     debugging_enabled: None,
                     has_breakpoints: None,
+                    auto_error_handling: None,
                     has_password: None,
                 },
                 None
@@ -251,6 +279,7 @@ mod tests {
                     saved_version: None,
                     debugging_enabled: None,
                     has_breakpoints: None,
+                    auto_error_handling: None,
                     has_password: None,
                 },
                 None
@@ -298,6 +327,7 @@ mod tests {
                 saved_version: Some(version),
                 debugging_enabled: None,
                 has_breakpoints: None,
+                auto_error_handling: None,
                 has_password: None,
             };
             assert_eq!(rule.check(&facts, None).is_some(), violation);
@@ -391,6 +421,7 @@ mod tests {
                 saved_version: Some(saved),
                 debugging_enabled: None,
                 has_breakpoints: None,
+                auto_error_handling: None,
                 has_password: None,
             };
             let options = RuleConfig {
@@ -418,6 +449,7 @@ mod tests {
                 saved_version: None,
                 debugging_enabled: None,
                 has_breakpoints: None,
+                auto_error_handling: None,
                 has_password: None,
             };
             assert_eq!(rule.check(&facts, None).is_some(), violation);
@@ -433,6 +465,7 @@ mod tests {
                 saved_version: None,
                 debugging_enabled,
                 has_breakpoints: None,
+                auto_error_handling: None,
                 has_password: None,
             };
             assert_eq!(
@@ -474,6 +507,7 @@ mod tests {
                 saved_version: None,
                 debugging_enabled: None,
                 has_breakpoints,
+                auto_error_handling: None,
                 has_password: None,
             };
             assert_eq!(NoBreakpoints.check(&facts, None).is_some(), expected);
@@ -490,9 +524,29 @@ mod tests {
                 saved_version: None,
                 debugging_enabled: None,
                 has_breakpoints: None,
+                auto_error_handling: None,
                 has_password,
             };
             assert_eq!(PasswordSet.check(&facts, None).is_some(), expected);
+        }
+    }
+
+    #[test]
+    fn automatic_error_handling_is_an_error_only_when_enabled() {
+        assert_eq!(AutoErrorHandling.default_severity(), Severity::Error);
+        for (auto_error_handling, expected) in
+            [(None, false), (Some(false), false), (Some(true), true)]
+        {
+            let facts = FileFacts {
+                separate_compiled_code: true,
+                has_description: None,
+                saved_version: None,
+                debugging_enabled: None,
+                has_breakpoints: None,
+                auto_error_handling,
+                has_password: None,
+            };
+            assert_eq!(AutoErrorHandling.check(&facts, None).is_some(), expected);
         }
     }
 }

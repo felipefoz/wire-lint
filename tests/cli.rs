@@ -353,6 +353,31 @@ fn password_findings_are_warnings_and_follow_the_failure_threshold() {
 }
 
 #[test]
+fn automatic_error_handling_fails_only_for_vi_files_with_the_flag_set() {
+    let directory = TestDirectory::new();
+    let mut enabled = vi_with_separation(true, b"LVIN");
+    let flags = u32::from_be_bytes(enabled[44..48].try_into().unwrap());
+    enabled[44..48].copy_from_slice(&(flags | 0x2000_0000).to_be_bytes());
+    directory.write("enabled.vi", enabled);
+    directory.write("disabled.vi", vi_with_separation(true, b"LVIN"));
+    let mut control = vi_with_separation(true, b"LVCC");
+    let flags = u32::from_be_bytes(control[44..48].try_into().unwrap());
+    control[44..48].copy_from_slice(&(flags | 0x2000_0000).to_be_bytes());
+    directory.write("control.ctl", control);
+
+    let output = directory.scan(&["--verbose"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Analyzed 3 file(s); 1 finding(s); 0 analysis error(s)."));
+    assert!(stdout.contains(
+        "enabled.vi: error [auto-error-handling]: Automatic error handling is enabled. Disable 'Enable automatic error handling' in VI Properties > Execution."
+    ));
+    assert!(!stdout.contains("disabled.vi:"));
+    assert!(!stdout.contains("control.ctl:"));
+}
+
+#[test]
 fn scans_xml_and_applies_yaml_severity_and_cli_threshold() {
     let directory = TestDirectory::new();
     directory.write(
@@ -532,7 +557,7 @@ fn disabling_all_rules_skips_parsing() {
     directory.write("broken.vi", []);
     let config = directory.write(
         "checks.yaml",
-        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n  no-breakpoints:\n    enabled: false\n  password-set:\n    enabled: false\n",
+        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n  no-breakpoints:\n    enabled: false\n  auto-error-handling:\n    enabled: false\n  password-set:\n    enabled: false\n",
     );
     let output = directory.configured_scan(&config, &[]);
     assert_eq!(output.status.code(), Some(0));
@@ -669,6 +694,7 @@ fn lists_rules_and_handles_an_empty_folder() {
     assert!(rules.contains("file-description [warning]"));
     assert!(rules.contains("debugging-status [warning]"));
     assert!(rules.contains("no-breakpoints [error]"));
+    assert!(rules.contains("auto-error-handling [error]"));
     assert!(rules.contains("password-set [warning]"));
     let directory = TestDirectory::new();
     for args in [vec![], vec!["--verbose"]] {
@@ -941,7 +967,7 @@ fn ci_reports_cover_empty_scans_disabled_rules_and_partial_analysis_failures() {
     }
     let config = directory.write(
         "checks.yaml",
-        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n  no-breakpoints:\n    enabled: false\n  password-set:\n    enabled: false\n",
+        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n  no-breakpoints:\n    enabled: false\n  auto-error-handling:\n    enabled: false\n  password-set:\n    enabled: false\n",
     );
     let output = directory.configured_scan(
         &config,

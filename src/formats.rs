@@ -60,6 +60,8 @@ pub struct FileFacts {
     pub debugging_enabled: Option<bool>,
     /// Stored breakpoints-set flag; absent for controls and XML containers.
     pub has_breakpoints: Option<bool>,
+    /// Stored automatic error handling flag; absent for controls and XML containers.
+    pub auto_error_handling: Option<bool>,
     /// Whether a password is set; absent for controls and XML containers.
     pub has_password: Option<bool>,
 }

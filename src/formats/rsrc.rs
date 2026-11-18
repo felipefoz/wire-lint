@@ -82,6 +82,7 @@ pub(super) fn read_facts_with_password(
     let mut saved_version = None;
     let mut debugging_enabled = None;
     let mut has_breakpoints = None;
+    let mut auto_error_handling = None;
     let is_vi = matches!(&header[8..12], b"LVIN" | b"sVIN");
     let mut has_password = (read_password && is_vi).then_some(false);
     let mut bdpw_seen = false;
@@ -109,11 +110,13 @@ pub(super) fn read_facts_with_password(
             if payload.len() < 68 {
                 return Err(invalid("truncated LVSR save record"));
             }
-            separate_compiled_code = Some(number(payload, 8)? & (1 << 10) != 0);
+            let vi_flags2 = number(payload, 8)?;
+            separate_compiled_code = Some(vi_flags2 & (1 << 10) != 0);
             if is_vi {
                 let instrument_state = number(payload, 24)?;
                 debugging_enabled = Some(instrument_state & (1 << 9) != 0);
                 has_breakpoints = Some(instrument_state & 0x2000_0000 != 0);
+                auto_error_handling = Some(vi_flags2 & 0x2000_0000 != 0);
             }
             if read_version || read_description {
                 let word = u32::from_be_bytes(payload[0..4].try_into().unwrap());
@@ -165,6 +168,7 @@ pub(super) fn read_facts_with_password(
         saved_version,
         debugging_enabled,
         has_breakpoints,
+        auto_error_handling,
         has_password,
     })
 }
@@ -479,6 +483,25 @@ mod tests {
                     read_facts(&bytes, false, false).unwrap().has_breakpoints,
                     matches!(kind, b"LVIN" | b"sVIN").then_some(expected),
                     "{kind:?}, {state:#x}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn reads_auto_error_handling_flag_only_for_vi_resources() {
+        for (flags, expected) in [(0, false), (1 << 10, false), (0x2000_0000, true)] {
+            for kind in [b"LVIN", b"sVIN", b"LVCC", b"sVCC"] {
+                let mut bytes = fixture(flags);
+                for offset in [8, 104 + 8] {
+                    bytes[offset..offset + 4].copy_from_slice(kind);
+                }
+                assert_eq!(
+                    read_facts(&bytes, false, false)
+                        .unwrap()
+                        .auto_error_handling,
+                    matches!(kind, b"LVIN" | b"sVIN").then_some(expected),
+                    "{kind:?}, {flags:#x}"
                 );
             }
         }

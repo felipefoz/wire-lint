@@ -46,6 +46,11 @@ compares the first BDPW hash with the empty-password marker. WireLint uses
 that documented interpretation to detect password presence without keeping
 or exposing the hash. No implementation code was copied.
 
+The `auto-error-handling` rule uses pylavi's
+[`TypeLVSR.AUTO_ERROR_HANDLING`](https://github.com/marcpage/pylavi/blob/main/pylavi/resource_types.py)
+interpretation (viFlags2 word 1, mask `0x20000000`), which identifies the
+saved automatic error handling setting. No implementation code was copied.
+
 pylabview attributes these source files to Mefistotelis and distributes them
 under the MIT License. Refer to its
 [license](https://github.com/mefistotelis/pylabview/blob/master/LICENSE).
