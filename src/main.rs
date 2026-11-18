@@ -8,6 +8,7 @@ mod analysis;
 mod cli;
 mod config;
 mod formats;
+mod reports;
 mod rules;
 mod scan;
 

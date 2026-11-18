@@ -1,13 +1,15 @@
-//! Command-line parsing and human-readable scan presentation.
+//! Command-line parsing, terminal summaries, and optional CI report files.
 
 use crate::analysis;
 use crate::config::{Config, FailOn};
+use crate::reports::{self, Format};
 use crate::rules::{BUILT_INS, Severity};
 use crate::scan;
 use clap::{Parser, Subcommand};
 use std::collections::BTreeMap;
+use std::fs;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Parser)]
@@ -41,6 +43,12 @@ enum Command {
         /// Print individual findings in addition to summary totals.
         #[arg(short, long)]
         verbose: bool,
+        /// CI report format; requires --output. Terminal output is unchanged.
+        #[arg(long, value_enum, requires = "output")]
+        format: Option<Format>,
+        /// Write the CI report to FILE (overwrite); requires --format. Parent must exist.
+        #[arg(long, value_name = "FILE", requires = "format")]
+        output: Option<PathBuf>,
     },
     /// List built-in rule IDs, descriptions, and default severities.
     Rules,
@@ -66,8 +74,11 @@ pub fn run(cli: Cli, output: &mut impl Write, errors: &mut impl Write) -> io::Re
             config,
             fail_on,
             verbose,
+            format,
+            output: destination,
         } => {
-            let config = config
+            let config_path = config;
+            let config = config_path
                 .as_deref()
                 .map(Config::load)
                 .transpose()?
@@ -108,9 +119,60 @@ pub fn run(cli: Cli, output: &mut impl Write, errors: &mut impl Write) -> io::Re
                 )?;
             }
             write_summary(&report, elapsed, output)?;
+            if let (Some(format), Some(destination)) = (format, destination) {
+                check_destination(&destination, &folder, &files, config_path.as_deref())?;
+                let bytes = reports::render(&report, format)?;
+                fs::write(&destination, bytes).map_err(|error| {
+                    io::Error::new(
+                        error.kind(),
+                        format!("cannot write report '{}': {error}", destination.display()),
+                    )
+                })?;
+            }
             Ok(report.exit_status(fail_on))
         }
     }
+}
+
+/// Rejects existing destinations that resolve to an input file or configuration.
+///
+/// Canonicalization catches alternate spellings and symbolic links. New files
+/// are allowed; other inspection errors propagate rather than disabling checks.
+fn check_destination(
+    destination: &Path,
+    root: &Path,
+    files: &[PathBuf],
+    config: Option<&Path>,
+) -> io::Result<()> {
+    let target = match fs::canonicalize(destination) {
+        Ok(path) => path,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(io::Error::new(
+                error.kind(),
+                format!(
+                    "cannot inspect report destination '{}': {error}",
+                    destination.display()
+                ),
+            ));
+        }
+    };
+    for input in files
+        .iter()
+        .map(|path| root.join(path))
+        .chain(config.map(Path::to_path_buf))
+    {
+        if fs::canonicalize(&input)? == target {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "report destination would overwrite input '{}'",
+                    input.display()
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Writes totals and elapsed scan time without individual file paths.
@@ -177,7 +239,7 @@ mod tests {
         ])
         .unwrap();
         assert!(
-            matches!(cli.command, Command::Scan { folder, config: Some(config), fail_on: Some(FailOn::Warning), verbose: true }
+            matches!(cli.command, Command::Scan { folder, config: Some(config), fail_on: Some(FailOn::Warning), verbose: true, .. }
             if folder == std::path::Path::new("project") && config == std::path::Path::new("checks.yaml"))
         );
         assert!(matches!(
@@ -217,6 +279,12 @@ mod tests {
             "excluding configuration loading and final report rendering",
             "Analysis errors always include file details",
             "minimum saved LabVIEW version of 20.0",
+            "--format",
+            "--output",
+            "gitlab",
+            "sarif",
+            "line 1",
+            "file-only",
         ] {
             assert!(help.contains(expected), "{expected}: {help}");
         }

@@ -30,4 +30,6 @@ WireLint needs a command-line interface that scans a LabVIEW project folder, run
 - Rule-specific options beyond common enablement and severity.
 - Default terminal summaries, finding verbosity, and elapsed scan time are
   resolved in [decision 0009](0009-summary-verbosity-and-scan-timing.md).
-- Mapping internal severities to report fields, exact report fields, and output-file behavior.
+- Mapping internal severities to report fields, exact report fields, and
+  output-file behavior are resolved in
+  [decision 0011](0011-ci-code-quality-reports.md).

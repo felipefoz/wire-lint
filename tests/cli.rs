@@ -455,3 +455,206 @@ fn saved_version_rule_checks_files_and_respects_configuration() {
     assert_eq!(output.status.code(), Some(0));
     assert!(output.stderr.is_empty());
 }
+
+#[test]
+fn ci_reports_preserve_terminal_output_thresholds_and_stable_fingerprints() {
+    let directory = TestDirectory::new();
+    let nested = directory.0.join("nested");
+    fs::create_dir(&nested).unwrap();
+    fs::write(
+        nested.join("example #.vi"),
+        vi_with_separation(false, b"LVIN"),
+    )
+    .unwrap();
+    let config = directory.write(
+        "checks.yaml",
+        "rules:\n  separate-compiled-code:\n    severity: error\n",
+    );
+    let destination = directory.0.join("report.json");
+    let destination_arg = destination.to_str().unwrap();
+    let baseline = directory.configured_scan(&config, &["--verbose"]);
+    for (format, threshold, status) in [
+        ("gitlab", "error", 1),
+        ("sarif", "error", 1),
+        ("gitlab", "none", 0),
+        ("sarif", "none", 0),
+    ] {
+        let output = directory.configured_scan(
+            &config,
+            &[
+                "--verbose",
+                "--fail-on",
+                threshold,
+                "--format",
+                format,
+                "--output",
+                destination_arg,
+            ],
+        );
+        assert_eq!(output.status.code(), Some(status));
+        assert!(output.stderr.is_empty());
+        assert_eq!(
+            scan_lines_without_timing(std::str::from_utf8(&output.stdout).unwrap()),
+            scan_lines_without_timing(std::str::from_utf8(&baseline.stdout).unwrap())
+        );
+        let bytes = fs::read(&destination).unwrap();
+        assert!(!bytes.starts_with(&[0xEF, 0xBB, 0xBF]));
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        if format == "gitlab" {
+            assert_eq!(json.as_array().unwrap().len(), 1);
+            assert_eq!(json[0]["location"]["path"], "nested/example #.vi");
+            assert_eq!(json[0]["location"]["lines"]["begin"], 1);
+            assert_eq!(json[0]["severity"], "major");
+        } else {
+            let run = &json["runs"][0];
+            assert_eq!(run["results"].as_array().unwrap().len(), 1);
+            assert_eq!(run["results"][0]["level"], "error");
+            assert_eq!(run["invocations"][0]["executionSuccessful"], true);
+            assert_eq!(
+                run["results"][0]["locations"][0]["physicalLocation"],
+                serde_json::json!({
+                    "artifactLocation": { "uri": "nested/example%20%23.vi" }
+                })
+            );
+        }
+        let repeated =
+            directory.configured_scan(&config, &["--format", format, "--output", destination_arg]);
+        assert_eq!(repeated.status.code(), Some(1));
+        assert_eq!(fs::read(&destination).unwrap(), bytes);
+    }
+}
+
+#[test]
+fn ci_reports_cover_empty_scans_disabled_rules_and_partial_analysis_failures() {
+    let directory = TestDirectory::new();
+    let destination = directory.0.join("report.json");
+    for format in ["gitlab", "sarif"] {
+        let args = [
+            "--format",
+            format,
+            "--output",
+            destination.to_str().unwrap(),
+        ];
+        let output = directory.scan(&args);
+        assert_eq!(output.status.code(), Some(0));
+        let empty: serde_json::Value =
+            serde_json::from_slice(&fs::read(&destination).unwrap()).unwrap();
+        if format == "gitlab" {
+            assert_eq!(empty, serde_json::json!([]));
+        } else {
+            assert_eq!(empty["runs"][0]["results"], serde_json::json!([]));
+            assert_eq!(
+                empty["runs"][0]["invocations"][0]["executionSuccessful"],
+                true
+            );
+        }
+    }
+    directory.write("broken.vi", b"not an RSRC file");
+    directory.write("finding.lvproj", r#"<Project LVVersion="20008000"/>"#);
+    for format in ["gitlab", "sarif"] {
+        let output = directory.scan(&[
+            "--format",
+            format,
+            "--output",
+            destination.to_str().unwrap(),
+            "--fail-on",
+            "none",
+        ]);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(
+            std::str::from_utf8(&output.stderr)
+                .unwrap()
+                .contains("broken.vi: analysis error:")
+        );
+        let json: serde_json::Value =
+            serde_json::from_slice(&fs::read(&destination).unwrap()).unwrap();
+        if format == "gitlab" {
+            assert_eq!(json.as_array().unwrap().len(), 1);
+            assert_eq!(json[0]["location"]["path"], "finding.lvproj");
+        } else {
+            let run = &json["runs"][0];
+            assert_eq!(run["results"].as_array().unwrap().len(), 1);
+            assert_eq!(run["invocations"][0]["executionSuccessful"], false);
+            assert_eq!(
+                run["invocations"][0]["toolExecutionNotifications"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }
+    }
+    let config = directory.write(
+        "checks.yaml",
+        "rules:\n  separate-compiled-code:\n    enabled: false\n  minimum-saved-version:\n    enabled: false\n",
+    );
+    let output = directory.configured_scan(
+        &config,
+        &[
+            "--format",
+            "sarif",
+            "--output",
+            destination.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(output.status.code(), Some(0));
+    let json: serde_json::Value = serde_json::from_slice(&fs::read(&destination).unwrap()).unwrap();
+    assert_eq!(json["runs"][0]["results"], serde_json::json!([]));
+    assert_eq!(
+        json["runs"][0]["invocations"][0]["executionSuccessful"],
+        true
+    );
+}
+
+#[test]
+fn ci_report_options_and_write_errors_fail_explicitly() {
+    let directory = TestDirectory::new();
+    for args in [
+        vec!["--format", "gitlab"],
+        vec!["--output", "report.json"],
+        vec!["--format", "unknown", "--output", "report.json"],
+    ] {
+        let output = directory.scan(&args);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert!(!output.stderr.is_empty());
+    }
+    for destination in [
+        directory.0.join("missing").join("report.json"),
+        directory.0.clone(),
+    ] {
+        let output = directory.scan(&[
+            "--format",
+            "gitlab",
+            "--output",
+            destination.to_str().unwrap(),
+        ]);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(
+            std::str::from_utf8(&output.stderr)
+                .unwrap()
+                .contains("cannot write report")
+        );
+    }
+}
+
+#[test]
+fn ci_reports_cannot_overwrite_discovered_sources_or_configuration() {
+    let directory = TestDirectory::new();
+    let source = directory.write("source.vi", vi_with_separation(false, b"LVIN"));
+    let config = directory.write("checks.yaml", "version: 1\n");
+    for path in [&source, &config] {
+        let original = fs::read(path).unwrap();
+        let output = directory.configured_scan(
+            &config,
+            &["--format", "gitlab", "--output", path.to_str().unwrap()],
+        );
+        assert_eq!(output.status.code(), Some(2));
+        assert!(
+            std::str::from_utf8(&output.stderr)
+                .unwrap()
+                .contains("would overwrite input")
+        );
+        assert_eq!(fs::read(path).unwrap(), original);
+    }
+}

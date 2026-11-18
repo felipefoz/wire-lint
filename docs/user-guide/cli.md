@@ -112,8 +112,57 @@ configuration and output are valid. Unsupported binary formats are errors,
 not passing checks. `--fail-on none` suppresses finding-based failures only,
 not analysis errors.
 
-General path/glob exclusions, command-line exclusion options, GitLab Code
-Quality, SARIF output, report files, and a quiet mode are not implemented yet.
+## CI report files
+
+```text
+wirelint scan . --format gitlab --output gl-code-quality-report.json
+wirelint scan . --format sarif --output wirelint.sarif
+```
+
+`--format` and `--output` must be supplied together. Each invocation writes one
+UTF-8 JSON report without a byte order mark. The terminal summary, `--verbose`,
+and exit thresholds are unchanged. Existing report files are overwritten; the
+parent directory must already exist. Destinations resolving to discovered input
+files or the loaded configuration are rejected.
+
+Reports include all findings regardless of the failure threshold. Empty scans
+and disabled rules produce empty findings. Reports are written after completed
+analysis even when the exit status is `1` or `2`. Configuration or discovery
+failures before analysis do not produce a report; a report write error returns
+`2`. Do not upload a stale report left by an earlier invocation.
+
+Paths are relative to the **scan folder**, with forward-slash separators.
+For CI, scan the repository root (`.` from the checkout root) so paths match
+tracked files. SARIF paths are percent-encoded URIs, including spaces and `#`.
+Non-UTF-8 finding paths are rejected rather than changed to lossy names.
+
+LabVIEW VIs do not have source lines. GitLab requires a positive line number,
+so `location.lines.begin` is always **1**, a file-level placeholder, not a
+diagram position. SARIF uses file-only locations without a line/region.
+Neither format provides diagram navigation; inline PR/MR annotations may not
+appear for binary files.
+
+| WireLint severity | GitLab | SARIF |
+| --- | --- | --- |
+| `info` | `info` | `note` |
+| `warning` | `minor` | `warning` |
+| `error` | `major` | `error` |
+
+Fingerprints identify the relative file path and rule. They remain stable
+across message/severity changes and different checkout locations; moving a
+file changes its fingerprint.
+
+Analysis errors remain on stderr and force status `2`. SARIF also records them
+as failed invocation notifications, separate from findings. GitLab's report
+format has no analysis-error channel: **check the process status**, since an
+empty GitLab report can accompany a failed/incomplete scan.
+
+See [CI integration](ci-reports.md) for GitLab and GitHub upload examples.
+
+## Deferred features
+
+General path/glob exclusions, command-line exclusion options, and a quiet mode
+are not implemented yet.
 Global diagnostic logging, including discovered-path details and per-file
 and per-rule elapsed timings, is also deferred; see the
 [output and logging decision](../decisions/0007-concise-output-and-future-logging.md).
