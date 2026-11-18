@@ -349,7 +349,7 @@ fn file_description_checks_every_supported_labview_extension() {
     let directory = TestDirectory::new();
     let config = directory.write(
         "checks.yaml",
-        "rules:\n  separate-compiled-code:\n    enabled: false\n  minimum-saved-version:\n    enabled: false\n  file-description:\n    enabled: true\n",
+        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: true\n",
     );
     for (extension, kind) in [
         ("vi", b"LVIN"),
@@ -434,7 +434,7 @@ fn disabling_all_rules_skips_parsing() {
     directory.write("broken.vi", []);
     let config = directory.write(
         "checks.yaml",
-        "rules:\n  separate-compiled-code:\n    enabled: false\n  minimum-saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n",
+        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n",
     );
     let output = directory.configured_scan(&config, &[]);
     assert_eq!(output.status.code(), Some(0));
@@ -566,7 +566,8 @@ fn lists_rules_and_handles_an_empty_folder() {
     assert!(output.status.success());
     let rules = String::from_utf8(output.stdout).unwrap();
     assert!(rules.contains("separate-compiled-code [warning]"));
-    assert!(rules.contains("minimum-saved-version [warning]"));
+    assert!(rules.contains("saved-version [warning]"));
+    assert!(!rules.contains("minimum-saved-version"));
     assert!(rules.contains("file-description [warning]"));
     assert!(rules.contains("debugging-status [warning]"));
     let directory = TestDirectory::new();
@@ -601,23 +602,27 @@ fn saved_version_rule_checks_files_and_respects_configuration() {
     let output = directory.configured_scan(&config, &["--verbose", "--fail-on", "warning"]);
     assert_eq!(output.status.code(), Some(1));
     let text = String::from_utf8(output.stdout).unwrap();
-    assert!(text.contains("older.vi: warning [minimum-saved-version]: Saved LabVIEW version 19.0 is below the minimum 20.0."));
-    assert!(text.contains("old.lvlib: warning [minimum-saved-version]"));
+    assert!(text.contains(
+        "older.vi: warning [saved-version]: Saved LabVIEW version 19.0 is below the minimum 20.0."
+    ));
+    assert!(text.contains("old.lvlib: warning [saved-version]"));
     assert!(!text.contains("equal.lvproj:"));
     assert!(!text.contains("newer.lvclass:"));
 
-    fs::write(&config, "rules:\n  separate-compiled-code:\n    enabled: false\n  file-description:\n    enabled: false\n  minimum-saved-version:\n    minimum-version: '20.1'\n").unwrap();
+    fs::write(&config, "rules:\n  separate-compiled-code:\n    enabled: false\n  file-description:\n    enabled: false\n  saved-version:\n    minimum-version: '20.1'\n").unwrap();
     let output = directory.configured_scan(&config, &["--verbose"]);
     assert_eq!(output.status.code(), Some(0));
     let text = String::from_utf8(output.stdout).unwrap();
-    assert!(text.contains("equal.lvproj: warning [minimum-saved-version]: Saved LabVIEW version 20.0 is below the minimum 20.1."));
+    assert!(text.contains("equal.lvproj: warning [saved-version]: Saved LabVIEW version 20.0 is below the minimum 20.1."));
     assert!(!text.contains("newer.lvclass:"));
 
-    fs::write(&config, "rules:\n  separate-compiled-code:\n    enabled: false\n  file-description:\n    enabled: false\n  minimum-saved-version:\n    minimum-version: '21.0'\n    severity: error\n").unwrap();
+    fs::write(&config, "rules:\n  separate-compiled-code:\n    enabled: false\n  file-description:\n    enabled: false\n  saved-version:\n    minimum-version: '21.0'\n    severity: error\n").unwrap();
     let output = directory.configured_scan(&config, &["--verbose"]);
     assert_eq!(output.status.code(), Some(1));
     let text = String::from_utf8(output.stdout).unwrap();
-    assert!(text.contains("equal.lvproj: error [minimum-saved-version]: Saved LabVIEW version 20.0 is below the minimum 21.0."));
+    assert!(text.contains(
+        "equal.lvproj: error [saved-version]: Saved LabVIEW version 20.0 is below the minimum 21.0."
+    ));
     assert!(!text.contains("newer.lvclass:"));
 
     directory.write("missing.lvproj", "<Project/>");
@@ -630,12 +635,77 @@ fn saved_version_rule_checks_files_and_respects_configuration() {
     );
     fs::write(
         &config,
-        "rules:\n  minimum-saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n",
+        "rules:\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n",
     )
     .unwrap();
     let output = directory.configured_scan(&config, &[]);
     assert_eq!(output.status.code(), Some(0));
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn saved_version_bounds_apply_to_binary_and_xml_files() {
+    let directory = TestDirectory::new();
+    for (name, word) in [
+        ("older.vi", 0x19008000_u32),
+        ("equal.vi", 0x20008000_u32),
+        ("newer.vi", 0x21008000_u32),
+    ] {
+        let mut bytes = vi_with_separation(true, b"LVIN");
+        bytes[36..40].copy_from_slice(&word.to_be_bytes());
+        directory.write(name, bytes);
+    }
+    directory.write("older.lvproj", r#"<Project LVVersion="19008000"/>"#);
+    directory.write("equal.lvclass", r#"<LVClass LVVersion="20008000"/>"#);
+    directory.write("newer.lvlib", r#"<Library LVVersion="21008000"/>"#);
+    for (bounds, expected_count) in [
+        ("maximum-version: '20.0'", 2),
+        ("minimum-version: '20.0'\n    maximum-version: '20.0'", 4),
+    ] {
+        let config = directory.write(
+            "checks.yaml",
+            format!(
+                "rules:\n  separate-compiled-code:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n  saved-version:\n    {bounds}\n"
+            ),
+        );
+        let output = directory.configured_scan(&config, &["--verbose", "--fail-on", "warning"]);
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stderr.is_empty());
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert!(text.contains("newer.vi: warning [saved-version]: Saved LabVIEW version 21.0 is above the maximum 20.0."));
+        assert!(text.contains("newer.lvlib: warning [saved-version]: Saved LabVIEW version 21.0 is above the maximum 20.0."));
+        assert!(!text.contains("equal.vi:"));
+        assert!(!text.contains("equal.lvclass:"));
+        assert_eq!(text.matches("[saved-version]").count(), expected_count);
+        assert_eq!(text.contains("older.vi:"), expected_count == 4);
+        assert_eq!(text.contains("older.lvproj:"), expected_count == 4);
+    }
+}
+
+#[test]
+fn saved_version_configuration_errors_prevent_scanning() {
+    let directory = TestDirectory::new();
+    directory.write("unreadable.vi", []);
+    for (rule, options, expected) in [
+        (
+            "minimum-saved-version",
+            "enabled: false",
+            "renamed to 'saved-version'",
+        ),
+        (
+            "saved-version",
+            "minimum-version: '21.0'\n    maximum-version: '20.0'",
+            "minimum-version must not exceed maximum-version",
+        ),
+    ] {
+        let config = directory.write("checks.yaml", format!("rules:\n  {rule}:\n    {options}\n"));
+        let output = directory.configured_scan(&config, &[]);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        let error = String::from_utf8(output.stderr).unwrap();
+        assert!(error.contains("checks.yaml"), "{error}");
+        assert!(error.contains(expected), "{error}");
+    }
 }
 
 #[test]
@@ -771,7 +841,7 @@ fn ci_reports_cover_empty_scans_disabled_rules_and_partial_analysis_failures() {
     }
     let config = directory.write(
         "checks.yaml",
-        "rules:\n  separate-compiled-code:\n    enabled: false\n  minimum-saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n",
+        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n",
     );
     let output = directory.configured_scan(
         &config,

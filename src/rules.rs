@@ -39,7 +39,7 @@ pub trait Rule: Sync {
 /// All built-in rules; add new implementations here without changing the runner.
 pub static BUILT_INS: &[&dyn Rule] = &[
     &SeparateCompiledCode,
-    &MinimumSavedVersion,
+    &SavedVersion,
     &FileDescription,
     &DebuggingStatus,
 ];
@@ -72,16 +72,16 @@ impl Rule for SeparateCompiledCode {
     }
 }
 
-/// Requires each file's saved release to meet the configured minimum.
-struct MinimumSavedVersion;
+/// Requires each file's saved release to fall within inclusive configured bounds.
+struct SavedVersion;
 
-impl Rule for MinimumSavedVersion {
+impl Rule for SavedVersion {
     fn id(&self) -> &'static str {
-        "minimum-saved-version"
+        "saved-version"
     }
 
     fn description(&self) -> &'static str {
-        "Require a minimum saved LabVIEW version (default 20.0)"
+        "Require saved LabVIEW version bounds (default minimum 20.0, no maximum)"
     }
 
     fn default_severity(&self) -> Severity {
@@ -89,14 +89,28 @@ impl Rule for MinimumSavedVersion {
     }
 
     fn check(&self, facts: &FileFacts, options: Option<&RuleConfig>) -> Option<String> {
+        let maximum = options.and_then(|options| options.maximum_version);
         let minimum = options
             .and_then(|options| options.minimum_version)
-            .unwrap_or(DEFAULT_MINIMUM_VERSION);
+            .or_else(|| maximum.is_none().then_some(DEFAULT_MINIMUM_VERSION));
         let version = facts
             .saved_version
             .expect("active version rule requires a version fact");
-        (version < minimum)
-            .then(|| format!("Saved LabVIEW version {version} is below the minimum {minimum}."))
+        if let Some(minimum) = minimum
+            && version < minimum
+        {
+            return Some(format!(
+                "Saved LabVIEW version {version} is below the minimum {minimum}."
+            ));
+        }
+        if let Some(maximum) = maximum
+            && version > maximum
+        {
+            return Some(format!(
+                "Saved LabVIEW version {version} is above the maximum {maximum}."
+            ));
+        }
+        None
     }
 }
 
@@ -191,7 +205,7 @@ mod tests {
 
     #[test]
     fn compares_releases_numerically_at_the_boundary() {
-        let rule = &MinimumSavedVersion;
+        let rule = &SavedVersion;
         for (version, violation) in [
             (
                 Version {
@@ -233,6 +247,108 @@ mod tests {
     }
 
     #[test]
+    fn saved_version_supports_maximum_only_ranges_and_exact_releases() {
+        let version = |major, minor| Version { major, minor };
+        for (minimum, maximum, saved, expected) in [
+            (None, Some(version(19, 0)), version(18, 9), None),
+            (None, Some(version(19, 0)), version(19, 0), None),
+            (
+                None,
+                Some(version(19, 0)),
+                version(19, 1),
+                Some("Saved LabVIEW version 19.1 is above the maximum 19.0."),
+            ),
+            (
+                None,
+                Some(version(20, 9)),
+                version(21, 0),
+                Some("Saved LabVIEW version 21.0 is above the maximum 20.9."),
+            ),
+            (
+                Some(version(20, 1)),
+                Some(version(21, 0)),
+                version(20, 0),
+                Some("Saved LabVIEW version 20.0 is below the minimum 20.1."),
+            ),
+            (
+                Some(version(20, 1)),
+                Some(version(21, 0)),
+                version(20, 1),
+                None,
+            ),
+            (
+                Some(version(20, 1)),
+                Some(version(21, 0)),
+                version(20, 9),
+                None,
+            ),
+            (
+                Some(version(20, 1)),
+                Some(version(21, 0)),
+                version(21, 0),
+                None,
+            ),
+            (
+                Some(version(20, 1)),
+                Some(version(21, 0)),
+                version(21, 1),
+                Some("Saved LabVIEW version 21.1 is above the maximum 21.0."),
+            ),
+            (
+                Some(version(20, 0)),
+                Some(version(20, 0)),
+                version(20, 0),
+                None,
+            ),
+            (
+                Some(version(20, 0)),
+                Some(version(20, 0)),
+                version(19, 9),
+                Some("Saved LabVIEW version 19.9 is below the minimum 20.0."),
+            ),
+            (
+                Some(version(20, 0)),
+                Some(version(20, 0)),
+                version(20, 1),
+                Some("Saved LabVIEW version 20.1 is above the maximum 20.0."),
+            ),
+            (
+                None,
+                None,
+                version(19, 9),
+                Some("Saved LabVIEW version 19.9 is below the minimum 20.0."),
+            ),
+            (None, None, version(20, 0), None),
+            (
+                Some(version(21, 0)),
+                None,
+                version(20, 9),
+                Some("Saved LabVIEW version 20.9 is below the minimum 21.0."),
+            ),
+            (Some(version(21, 0)), None, version(21, 0), None),
+        ] {
+            let facts = FileFacts {
+                separate_compiled_code: true,
+                has_description: None,
+                saved_version: Some(saved),
+                debugging_enabled: None,
+            };
+            let options = RuleConfig {
+                enabled: true,
+                severity: None,
+                minimum_version: minimum,
+                maximum_version: maximum,
+                fail_when: None,
+            };
+            assert_eq!(
+                SavedVersion.check(&facts, Some(&options)).as_deref(),
+                expected,
+                "minimum {minimum:?}, maximum {maximum:?}, saved {saved}"
+            );
+        }
+    }
+
+    #[test]
     fn reports_missing_or_blank_file_descriptions() {
         let rule = &FileDescription;
         for (has_description, violation) in [(Some(false), true), (Some(true), false)] {
@@ -264,6 +380,7 @@ mod tests {
                     enabled: true,
                     severity: None,
                     minimum_version: None,
+                    maximum_version: None,
                     fail_when: Some(fail_when),
                 };
                 let finding = DebuggingStatus.check(&facts, Some(&options));

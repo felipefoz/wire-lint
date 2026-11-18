@@ -46,8 +46,10 @@ pub struct RuleConfig {
     #[serde(default = "enabled")]
     pub enabled: bool,
     pub severity: Option<Severity>,
-    #[serde(default, deserialize_with = "minimum_version")]
+    #[serde(default, deserialize_with = "version_bound")]
     pub minimum_version: Option<Version>,
+    #[serde(default, deserialize_with = "version_bound")]
+    pub maximum_version: Option<Version>,
     #[serde(default, deserialize_with = "debugging_state")]
     pub fail_when: Option<DebuggingState>,
 }
@@ -61,16 +63,16 @@ where
 }
 
 /// Accepts only a quoted major.minor string, avoiding YAML number coercion.
-fn minimum_version<'de, D>(deserializer: D) -> Result<Option<Version>, D::Error>
+fn version_bound<'de, D>(deserializer: D) -> Result<Option<Version>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     match serde_yaml_ng::Value::deserialize(deserializer)? {
-        serde_yaml_ng::Value::String(value) => Version::parse(&value).map(Some).ok_or_else(|| {
-            serde::de::Error::custom("minimum-version must be a major.minor string")
-        }),
+        serde_yaml_ng::Value::String(value) => Version::parse(&value)
+            .map(Some)
+            .ok_or_else(|| serde::de::Error::custom("version bound must be a major.minor string")),
         _ => Err(serde::de::Error::custom(
-            "minimum-version must be a quoted major.minor string",
+            "version bound must be a quoted major.minor string",
         )),
     }
 }
@@ -193,16 +195,36 @@ impl Config {
             }
         }
         for (id, options) in &config.rules {
+            if id == "minimum-saved-version" {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "rule 'minimum-saved-version' was renamed to 'saved-version'; rename the configuration key",
+                ));
+            }
             if !BUILT_INS.iter().any(|rule| rule.id() == id) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!("unknown rule '{id}'"),
                 ));
             }
-            if id != "minimum-saved-version" && options.minimum_version.is_some() {
+            for (name, bound) in [
+                ("minimum-version", options.minimum_version),
+                ("maximum-version", options.maximum_version),
+            ] {
+                if id != "saved-version" && bound.is_some() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("{name} is not supported by rule '{id}'"),
+                    ));
+                }
+            }
+            if let (Some(minimum), Some(maximum)) =
+                (options.minimum_version, options.maximum_version)
+                && minimum > maximum
+            {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("minimum-version is not supported by rule '{id}'"),
+                    "minimum-version must not exceed maximum-version",
                 ));
             }
             if id != "debugging-status" && options.fail_when.is_some() {
@@ -238,9 +260,10 @@ mod tests {
             );
         }
         assert_eq!(
-            config.rules["minimum-saved-version"].minimum_version,
+            config.rules["saved-version"].minimum_version,
             Some(crate::rules::DEFAULT_MINIMUM_VERSION)
         );
+        assert_eq!(config.rules["saved-version"].maximum_version, None);
         assert_eq!(
             config.rules["debugging-status"].fail_when,
             Some(DebuggingState::default())
@@ -337,32 +360,69 @@ mod tests {
     }
 
     #[test]
-    fn validates_rule_specific_minimum_version() {
-        let config =
-            Config::parse("rules:\n  minimum-saved-version:\n    minimum-version: '21.3'\n")
-                .unwrap();
-        assert_eq!(
-            config.rules["minimum-saved-version"].minimum_version,
-            Some(Version {
-                major: 21,
-                minor: 3
-            })
-        );
-        for value in [
-            "20.0", "null", "'20'", "'20.10'", "'100.0'", "'20.0.1'", "'-1.0'",
+    fn validates_rule_specific_version_bounds() {
+        for option in ["minimum-version", "maximum-version"] {
+            let config =
+                Config::parse(&format!("rules:\n  saved-version:\n    {option}: '21.3'\n"))
+                    .unwrap();
+            let options = &config.rules["saved-version"];
+            assert_eq!(
+                if option == "minimum-version" {
+                    options.minimum_version
+                } else {
+                    options.maximum_version
+                },
+                Some(Version {
+                    major: 21,
+                    minor: 3
+                })
+            );
+            for value in [
+                "20.0", "null", "'20'", "'20.10'", "'100.0'", "'20.0.1'", "'-1.0'",
+            ] {
+                assert!(
+                    Config::parse(&format!(
+                        "rules:\n  saved-version:\n    {option}: {value}\n"
+                    ))
+                    .is_err(),
+                    "{option}: {value}"
+                );
+            }
+            for rule in [
+                "separate-compiled-code",
+                "file-description",
+                "debugging-status",
+            ] {
+                assert!(
+                    Config::parse(&format!("rules:\n  {rule}:\n    {option}: '20.0'\n")).is_err()
+                );
+            }
+        }
+        for (minimum, maximum, valid) in [
+            ("20.0", "21.0", true),
+            ("20.0", "20.0", true),
+            ("20.1", "20.0", false),
+            ("21.0", "20.9", false),
         ] {
+            for enabled in [true, false] {
+                let result = Config::parse(&format!(
+                    "rules:\n  saved-version:\n    enabled: {enabled}\n    minimum-version: '{minimum}'\n    maximum-version: '{maximum}'\n"
+                ));
+                assert_eq!(result.is_ok(), valid, "{minimum}..={maximum}");
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_old_version_rule_with_migration_guidance() {
+        for options in ["{}", "{enabled: false}", "{minimum-version: '20.0'}"] {
+            let error = Config::parse(&format!("rules:\n  minimum-saved-version: {options}\n"))
+                .unwrap_err();
             assert!(
-                Config::parse(&format!(
-                    "rules:\n  minimum-saved-version:\n    minimum-version: {value}\n"
-                ))
-                .is_err(),
-                "{value}"
+                error.to_string().contains("renamed to 'saved-version'"),
+                "{error}"
             );
         }
-        assert!(
-            Config::parse("rules:\n  separate-compiled-code:\n    minimum-version: '20.0'\n")
-                .is_err()
-        );
     }
 
     #[test]

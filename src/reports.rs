@@ -212,7 +212,7 @@ mod tests {
         report.findings[0].path = PathBuf::from("other.vi");
         assert_ne!(original, value(&report, Format::Gitlab)[0]["fingerprint"]);
         report.findings[0].path = sample().findings.remove(0).path;
-        report.findings[0].rule = "minimum-saved-version";
+        report.findings[0].rule = "saved-version";
         assert_ne!(original, value(&report, Format::Gitlab)[0]["fingerprint"]);
         assert_ne!(fingerprint("ab", "c"), fingerprint("a", "bc"));
     }

@@ -75,7 +75,7 @@ pub fn analyze(root: &Path, files: &[PathBuf], config: &Config) -> Report {
     }
     let read_version = active
         .iter()
-        .any(|(rule, _, _)| rule.id() == "minimum-saved-version");
+        .any(|(rule, _, _)| rule.id() == "saved-version");
     let read_description = active
         .iter()
         .any(|(rule, _, _)| rule.id() == "file-description");

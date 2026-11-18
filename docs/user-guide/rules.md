@@ -135,24 +135,36 @@ Binary descriptions are read from the first string in an uncompressed
 pre-4.0 and 4.0-or-newer LabVIEW files; unsupported or malformed records are
 analysis errors.
 
-## `minimum-saved-version`
+## `saved-version`
 
-Requires each file's saved LabVIEW major.minor release to be at least the
-configured minimum. It defaults to `20.0` and reports a `warning`. It applies
-to `.vi`, `.vit`, `.vim`, `.ctl`, `.lvproj`, `.lvclass`, and `.lvlib`.
+Requires each file's saved LabVIEW major.minor release to fall within the
+configured inclusive bounds. It defaults to a minimum of `20.0`, no maximum,
+and reports a `warning`. It applies to `.vi`, `.vit`, `.vim`, `.ctl`, `.lvproj`,
+`.lvclass`, and `.lvlib`.
 
 ```yaml
 rules:
-  minimum-saved-version:
+  saved-version:
     enabled: true
     severity: warning
     minimum-version: '20.0'
+    maximum-version: '21.0'
 ```
 
-Quote `minimum-version`: it must be a major.minor string, with a major from
+Set either bound or both. With only `maximum-version`, no minimum applies;
+with neither bound, the default minimum of `20.0` applies. Equal bounds
+require exactly that major.minor release. A minimum greater than the maximum
+is a configuration error, even when the rule is disabled.
+
+Quote both version options: each must be a major.minor string, with a major from
 0 to 99 and a minor from 0 to 9. Comparison is numeric, not decimal or
-lexicographic. Patch, build, and prerelease stage are ignored. The check is
-for a minimum, not a guarantee that an older LabVIEW can open a newer file.
+lexicographic. Patch, build, and prerelease stage are ignored. These bounds
+check saved release metadata; they do not guarantee runtime compatibility.
+
+The former `minimum-saved-version` ID is rejected with a migration message.
+Rename its configuration key to `saved-version`; existing `minimum-version`
+options keep their meaning. Findings and CI reports also use the new ID,
+so existing saved-version findings receive new report fingerprints.
 
 For VI-family files, the version word is at offset 0 in the `LVSR` save-record
 payload. For XML files, the root's `LVVersion` attribute encodes the same

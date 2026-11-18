@@ -39,7 +39,7 @@ rules:
   separate-compiled-code:
     enabled: true
     severity: warning
-  minimum-saved-version:
+  saved-version:
     enabled: true
     severity: warning
     minimum-version: '20.0'
@@ -57,7 +57,8 @@ rules:
 | `rules` | Mapping of built-in rule IDs to option mappings | No overrides |
 | `rules.<id>.enabled` | YAML Boolean | `true` |
 | `rules.<id>.severity` | `info`, `warning`, `error` | Rule default |
-| `rules.minimum-saved-version.minimum-version` | Quoted `major.minor` string | `'20.0'` |
+| `rules.saved-version.minimum-version` | Quoted `major.minor` string | `'20.0'` if neither bound is set; otherwise no implicit minimum |
+| `rules.saved-version.maximum-version` | Quoted `major.minor` string | No maximum |
 | `rules.debugging-status.fail-when` | `enabled`, `disabled` | `enabled` |
 
 Fields may be omitted. An omitted rule remains enabled; `rules: {}` does not
@@ -69,6 +70,13 @@ invalid YAML, and invalid option values are errors. WireLint reports the
 configuration path and exits with status 2 before scanning. This version
 supports a single YAML document; custom scripts are not supported. Rule-specific
 options are accepted only for the rule that defines them.
+
+The `saved-version` bounds are inclusive. Set only `maximum-version` for an
+upper-bound-only check, or set both bounds to the same value to require an
+exact major.minor release. A minimum greater than the maximum is an error.
+Explicit `null` bounds are invalid; omit an unwanted bound instead.
+Rename the former `minimum-saved-version` rule key to `saved-version`;
+the old key is rejected with migration guidance.
 
 ## Folder exclusions
 

@@ -17,9 +17,10 @@ rules:
   separate-compiled-code:
     enabled: true
     severity: warning
-  # Require each file to be saved in this LabVIEW release or newer.
-  # the equivalent editor-version setting on projects, libraries, and classes.
-  minimum-saved-version:
+  # Check each file's saved LabVIEW release (including XML editor versions).
+  # Add maximum-version: "21.0" for an inclusive upper bound.
+  # With only maximum-version set, no minimum applies.
+  saved-version:
     enabled: true
     severity: warning
     minimum-version: "20.0"

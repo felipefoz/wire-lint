@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-11-17
+- Rule naming and bounds policy superseded by [decision 0014](0014-saved-version-bounds.md).
 
 ## Context
 
