@@ -15,3 +15,6 @@ Use GitHub Actions on pushes and pull requests. Run formatting checks, tests, an
 
 - Keep the workflow checks aligned with the commands in `CONTRIBUTING.md`.
 - Maintain coverage for both supported operating systems.
+- Keep tests self-contained in clean checkouts. Generate synthetic binary
+  fixtures from tracked Rust test helpers instead of relying on ignored
+  sandbox files, which are absent from CI.

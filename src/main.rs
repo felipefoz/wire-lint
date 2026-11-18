@@ -12,6 +12,10 @@ mod reports;
 mod rules;
 mod scan;
 
+#[cfg(test)]
+#[path = "../tests/support/mod.rs"]
+mod test_support;
+
 /// Parses the command line and returns the selected command's exit status.
 fn main() -> ExitCode {
     match cli::run(

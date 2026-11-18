@@ -38,6 +38,10 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 Add focused tests for new features and bug fixes.
 
+Tests must run from a clean checkout without LabVIEW or ignored sandbox files.
+Construct binary fixtures synthetically; shared fixture builders belong in
+`tests/support/`. Keep XML fixtures inline when they are small.
+
 ## Commit messages
 
 Use Conventional Commits for commit subjects:

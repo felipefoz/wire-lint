@@ -1,5 +1,7 @@
 //! End-to-end coverage of configuration, analysis, output, and process status.
 
+mod support;
+
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -784,11 +786,11 @@ fn orphaned_vi_rule_flags_only_a_scanned_library_that_omits_the_vi() {
     let rule_config = "rules:\n  separate-compiled-code: { enabled: false }\n  saved-version: { enabled: false }\n  file-description: { enabled: false }\n  debugging-status: { enabled: false }\n  no-breakpoints: { enabled: false }\n  auto-error-handling: { enabled: false }\n  password-set: { enabled: false }\n  orphaned-vi: { enabled: true }\n";
 
     let orphaned = TestDirectory::new();
-    orphaned.write("orphan-vi.vi", include_bytes!("../sandbox/orphan-vi.vi"));
     orphaned.write(
-        "orphaned-example.lvlib",
-        include_bytes!("../sandbox/orphaned-example.lvlib"),
+        "orphan-vi.vi",
+        support::vi_with_library_link("orphaned-example.lvlib"),
     );
+    orphaned.write("orphaned-example.lvlib", "<Library/>");
     let config = orphaned.write("checks.yaml", rule_config);
     let output = orphaned.configured_scan(&config, &["--verbose"]);
     assert_eq!(output.status.code(), Some(1));
@@ -799,7 +801,10 @@ fn orphaned_vi_rule_flags_only_a_scanned_library_that_omits_the_vi() {
     assert!(stdout.contains("Findings by severity: 0 info; 0 warning; 1 error."));
 
     let listed = TestDirectory::new();
-    listed.write("orphan-vi.vi", include_bytes!("../sandbox/orphan-vi.vi"));
+    listed.write(
+        "orphan-vi.vi",
+        support::vi_with_library_link("orphaned-example.lvlib"),
+    );
     listed.write(
         "orphaned-example.lvlib",
         r#"<Library><Item Name="orphan-vi.vi" Type="VI" URL="orphan-vi.vi"/></Library>"#,

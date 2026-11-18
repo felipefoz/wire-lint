@@ -835,7 +835,7 @@ mod tests {
     fn reads_relative_owning_library_from_the_vi_link_table() {
         let facts = super::super::read_facts_with_orphaned_vi(
             std::path::Path::new("orphan-vi.vi"),
-            include_bytes!("../../sandbox/orphan-vi.vi"),
+            &crate::test_support::vi_with_library_link("orphaned-example.lvlib"),
             false,
             false,
             false,

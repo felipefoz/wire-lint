@@ -1,0 +1,52 @@
+//! Synthetic RSRC fixtures shared by parser and command-line tests.
+
+/// Builds the supported VI subset with LVSR settings and a relative LIvi owner.
+///
+/// `library` is one UTF-8 path component with at most 255 bytes. No external
+/// files or LabVIEW installation are needed.
+pub fn vi_with_library_link(library: &str) -> Vec<u8> {
+    let component_length = u8::try_from(library.len()).expect("fixture path component is too long");
+    let mut link = b"VILBPTH0".to_vec();
+    link.extend_from_slice(&(5 + library.len() as u32).to_be_bytes());
+    link.extend_from_slice(&[0, 1, 0, 1, component_length]);
+    link.extend_from_slice(library.as_bytes());
+
+    let data_size = 72 + 4 + link.len();
+    let table_size = 4 + 2 * 12;
+    let info_size = 52 + table_size + 2 * 20;
+    let info_offset = 32 + data_size;
+    let mut bytes = vec![0; info_offset + info_size];
+    for header in [0, info_offset] {
+        bytes[header..header + 16].copy_from_slice(b"RSRC\r\n\0\x03LVINLBVW");
+        put(&mut bytes, header + 16, info_offset as u32);
+        put(&mut bytes, header + 20, info_size as u32);
+        put(&mut bytes, header + 24, 32);
+        put(&mut bytes, header + 28, data_size as u32);
+    }
+
+    put(&mut bytes, 32, 68);
+    put(&mut bytes, 36, 0x20008000);
+    put(&mut bytes, 44, 1 << 10);
+    put(&mut bytes, 104, link.len() as u32);
+    bytes[108..108 + link.len()].copy_from_slice(&link);
+
+    put(&mut bytes, info_offset + 40, 32);
+    put(&mut bytes, info_offset + 44, 52);
+    put(&mut bytes, info_offset + 48, info_size as u32);
+    let table = info_offset + 52;
+    put(&mut bytes, table, 1);
+    for (index, (id, offset)) in [(b"LVSR", 0), (b"LIvi", 72)].iter().enumerate() {
+        let entry = table + 4 + index * 12;
+        let section = table + table_size + index * 20;
+        bytes[entry..entry + 4].copy_from_slice(*id);
+        put(&mut bytes, entry + 8, (table_size + index * 20) as u32);
+        put(&mut bytes, section + 4, u32::MAX);
+        put(&mut bytes, section + 12, *offset);
+    }
+    bytes
+}
+
+/// Writes a big-endian word at a fixture-owned offset.
+fn put(bytes: &mut [u8], offset: usize, value: u32) {
+    bytes[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
+}
