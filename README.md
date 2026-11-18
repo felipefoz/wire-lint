@@ -1,5 +1,13 @@
 # WireLint
 
+[![CI](https://img.shields.io/github/actions/workflow/status/felipefoz/wire-lint/ci.yml?branch=main&label=CI)](https://github.com/felipefoz/wire-lint/actions/workflows/ci.yml)
+![Language: Rust](https://img.shields.io/badge/language-Rust-orange)
+![Status: Beta](https://img.shields.io/badge/status-beta-yellow)
+![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue)
+![License: MIT](https://img.shields.io/badge/license-MIT-green)
+
+![WireLint: LabVIEW static analysis](docs/assets/wirelint-hero.svg)
+
 Static Analysis for LabVIEW.
 
 WireLint aims to provide an independent static-analysis tool for LabVIEW files, similar in purpose to NI's VI Analyzer. It is not affiliated with, endorsed by, or sponsored by National Instruments (NI). LabVIEW is a trademark of NI.
