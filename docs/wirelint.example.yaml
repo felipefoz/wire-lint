@@ -34,3 +34,7 @@ rules:
     enabled: true
     severity: warning
     fail-when: enabled
+  # Reject VIs saved with block diagram breakpoints.
+  no-breakpoints:
+    enabled: true
+    severity: error

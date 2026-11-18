@@ -90,5 +90,6 @@ pub(super) fn read_facts(
         has_description,
         saved_version,
         debugging_enabled: None,
+        has_breakpoints: None,
     })
 }

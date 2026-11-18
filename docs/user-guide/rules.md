@@ -213,6 +213,32 @@ Example.vi: warning [debugging-status]: Debugging is enabled. Disable Allow debu
 
 WireLint does not change the VI's settings.
 
+## `no-breakpoints`
+
+Disallows VIs saved with block diagram breakpoints. It is enabled by default
+with `error` severity, so findings fail the default CI threshold. It applies
+to VI and VI-template files (`.vi`, `.vit`, `.vim`); controls and XML
+containers have no applicable breakpoint state and are skipped.
+
+The rule reads the LVSR **Breakpoints Set** flag in the saved VI state
+(payload word at offset 24, mask `0x20000000`). It detects the saved flag, not
+individual breakpoint locations, and does not modify the VI. Remove saved
+breakpoints in LabVIEW before committing. The rule has no specific options;
+use the common `enabled` and `severity` options to override its defaults.
+
+```yaml
+rules:
+  no-breakpoints:
+    enabled: true
+    severity: error
+```
+
+Use `--verbose` to show findings:
+
+```text
+Example.vi: error [no-breakpoints]: Remove all block diagram breakpoints before committing this VI.
+```
+
 ## Adding a built-in rule
 
 The [rule architecture decision](../decisions/0006-rule-runner-and-source-only-check.md)

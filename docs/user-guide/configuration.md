@@ -47,6 +47,9 @@ rules:
     enabled: true
     severity: warning
     fail-when: enabled
+  no-breakpoints:
+    enabled: true
+    severity: error
 ```
 
 | Key | Accepted values | Default |
@@ -60,6 +63,7 @@ rules:
 | `rules.saved-version.minimum-version` | Quoted `major.minor` string | `'20.0'` if neither bound is set; otherwise no implicit minimum |
 | `rules.saved-version.maximum-version` | Quoted `major.minor` string | No maximum |
 | `rules.debugging-status.fail-when` | `enabled`, `disabled` | `enabled` |
+| `rules.no-breakpoints` | Common `enabled` and `severity` options only | Enabled, `error` |
 
 Fields may be omitted. An omitted rule remains enabled; `rules: {}` does not
 disable built-ins. An empty options mapping also retains defaults. Use `{}`

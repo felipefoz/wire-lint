@@ -58,6 +58,8 @@ pub struct FileFacts {
     pub saved_version: Option<Version>,
     /// Stored DebugCapable flag; absent for controls and XML containers.
     pub debugging_enabled: Option<bool>,
+    /// Stored breakpoints-set flag; absent for controls and XML containers.
+    pub has_breakpoints: Option<bool>,
 }
 
 /// Reads a VI-family RSRC file or an XML project/library/class document.

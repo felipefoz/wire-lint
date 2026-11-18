@@ -70,6 +70,7 @@ pub(super) fn read_facts(
     let mut file_version = None;
     let mut saved_version = None;
     let mut debugging_enabled = None;
+    let mut has_breakpoints = None;
     let mut strg = None;
     for block in table[4..table_size].as_chunks::<12>().0 {
         if &block[..4] == b"LVSR" {
@@ -96,7 +97,9 @@ pub(super) fn read_facts(
             }
             separate_compiled_code = Some(number(payload, 8)? & (1 << 10) != 0);
             if matches!(&header[8..12], b"LVIN" | b"sVIN") {
-                debugging_enabled = Some(number(payload, 24)? & (1 << 9) != 0);
+                let instrument_state = number(payload, 24)?;
+                debugging_enabled = Some(instrument_state & (1 << 9) != 0);
+                has_breakpoints = Some(instrument_state & 0x2000_0000 != 0);
             }
             if read_version || read_description {
                 let word = u32::from_be_bytes(payload[0..4].try_into().unwrap());
@@ -135,6 +138,7 @@ pub(super) fn read_facts(
         has_description,
         saved_version,
         debugging_enabled,
+        has_breakpoints,
     })
 }
 
@@ -349,6 +353,29 @@ mod tests {
                 }
                 assert_eq!(
                     read_facts(&bytes, false, false).unwrap().debugging_enabled,
+                    matches!(kind, b"LVIN" | b"sVIN").then_some(expected),
+                    "{kind:?}, {state:#x}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn reads_breakpoints_set_flag_without_conflating_other_instrument_state_bits() {
+        for (state, expected) in [
+            (0, false),
+            (1 << 9, false),
+            (0x2000_0000, true),
+            (0x4000_0000, false),
+        ] {
+            for kind in [b"LVIN", b"sVIN", b"LVCC", b"sVCC"] {
+                let mut bytes = fixture(1 << 10);
+                put(&mut bytes, 36 + 24, state);
+                for offset in [8, 104 + 8] {
+                    bytes[offset..offset + 4].copy_from_slice(kind);
+                }
+                assert_eq!(
+                    read_facts(&bytes, false, false).unwrap().has_breakpoints,
                     matches!(kind, b"LVIN" | b"sVIN").then_some(expected),
                     "{kind:?}, {state:#x}"
                 );

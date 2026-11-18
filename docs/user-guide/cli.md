@@ -43,8 +43,10 @@ wirelint scan path/to/project --fail-on warning
 
 All built-in rules are enabled by default, with their default severities. The
 rules check compiled-code separation, saved LabVIEW version bounds
-(default minimum `20.0`, no maximum), file descriptions, and VI debugging status.
-All default to `warning`, so findings do not fail the default `error` threshold.
+(default minimum `20.0`, no maximum), file descriptions, VI debugging status,
+and saved block diagram breakpoints. The `no-breakpoints` rule defaults to
+`error` severity, so findings fail the default threshold. Other built-in rules
+default to `warning`, which does not fail the default `error` threshold.
 The `debugging-status` rule flags debugging-enabled VIs by default.
 Set its YAML option `fail-when: disabled` to flag the opposite state.
 The `saved-version` rule accepts inclusive `minimum-version` and

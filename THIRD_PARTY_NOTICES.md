@@ -32,6 +32,14 @@ includes instrument-state bit 30, which pylabview labels unknown. WireLint
 uses only pylabview's documented bit 9. No implementation code was copied
 from either project.
 
+The `no-breakpoints` rule uses pylavi's `TypeLVSR.BREAKPOINTS_SET`
+interpretation (word 5, mask `0x20000000`) from the same
+[`resource_types.py`](https://github.com/marcpage/pylavi/blob/main/pylavi/resource_types.py)
+reference. This is bit 29 of the instrument-state word, which pylabview leaves
+unknown; WireLint follows pylavi's explicit breakpoint label rather than
+deriving breakpoint presence from debugging capability. No implementation
+code was copied.
+
 pylabview attributes these source files to Mefistotelis and distributes them
 under the MIT License. Refer to its
 [license](https://github.com/mefistotelis/pylabview/blob/master/LICENSE).

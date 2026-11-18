@@ -42,6 +42,7 @@ pub static BUILT_INS: &[&dyn Rule] = &[
     &SavedVersion,
     &FileDescription,
     &DebuggingStatus,
+    &NoBreakpoints,
 ];
 
 /// Default minimum release for saved LabVIEW files.
@@ -170,6 +171,30 @@ impl Rule for DebuggingStatus {
     }
 }
 
+/// Rejects VIs saved with the LVSR breakpoints-set flag.
+struct NoBreakpoints;
+
+impl Rule for NoBreakpoints {
+    fn id(&self) -> &'static str {
+        "no-breakpoints"
+    }
+
+    fn description(&self) -> &'static str {
+        "Disallow saved block diagram breakpoints"
+    }
+
+    fn default_severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn check(&self, facts: &FileFacts, _options: Option<&RuleConfig>) -> Option<String> {
+        facts
+            .has_breakpoints
+            .filter(|has_breakpoints| *has_breakpoints)
+            .map(|_| "Remove all block diagram breakpoints before committing this VI.".to_owned())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,6 +209,7 @@ mod tests {
                     has_description: None,
                     saved_version: None,
                     debugging_enabled: None,
+                    has_breakpoints: None,
                 },
                 None
             )
@@ -196,6 +222,7 @@ mod tests {
                     has_description: None,
                     saved_version: None,
                     debugging_enabled: None,
+                    has_breakpoints: None,
                 },
                 None
             )
@@ -241,6 +268,7 @@ mod tests {
                 has_description: None,
                 saved_version: Some(version),
                 debugging_enabled: None,
+                has_breakpoints: None,
             };
             assert_eq!(rule.check(&facts, None).is_some(), violation);
         }
@@ -332,6 +360,7 @@ mod tests {
                 has_description: None,
                 saved_version: Some(saved),
                 debugging_enabled: None,
+                has_breakpoints: None,
             };
             let options = RuleConfig {
                 enabled: true,
@@ -357,6 +386,7 @@ mod tests {
                 has_description,
                 saved_version: None,
                 debugging_enabled: None,
+                has_breakpoints: None,
             };
             assert_eq!(rule.check(&facts, None).is_some(), violation);
         }
@@ -370,6 +400,7 @@ mod tests {
                 has_description: None,
                 saved_version: None,
                 debugging_enabled,
+                has_breakpoints: None,
             };
             assert_eq!(
                 DebuggingStatus.check(&facts, None).is_some(),
@@ -396,6 +427,22 @@ mod tests {
                     }));
                 }
             }
+        }
+    }
+
+    #[test]
+    fn breakpoint_rule_flags_only_v_is_with_saved_breakpoints() {
+        assert_eq!(NoBreakpoints.default_severity(), Severity::Error);
+        for (has_breakpoints, expected) in [(None, false), (Some(false), false), (Some(true), true)]
+        {
+            let facts = FileFacts {
+                separate_compiled_code: true,
+                has_description: None,
+                saved_version: None,
+                debugging_enabled: None,
+                has_breakpoints,
+            };
+            assert_eq!(NoBreakpoints.check(&facts, None).is_some(), expected);
         }
     }
 }

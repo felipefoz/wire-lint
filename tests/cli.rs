@@ -255,6 +255,29 @@ fn debugging_status_defaults_to_enabled_and_supports_reversed_or_disabled_policy
 }
 
 #[test]
+fn breakpoints_fail_by_default_but_controls_are_not_checked() {
+    let directory = TestDirectory::new();
+    let mut breakpoint_vi = vi_with_separation(true, b"LVIN");
+    put_u32(&mut breakpoint_vi, 36 + 24, 0x2000_0000);
+    directory.write("with-breakpoint.vi", breakpoint_vi);
+    directory.write("without-breakpoint.vi", vi_with_separation(true, b"LVIN"));
+    let mut breakpoint_control = vi_with_separation(true, b"LVCC");
+    put_u32(&mut breakpoint_control, 36 + 24, 0x2000_0000);
+    directory.write("control.ctl", breakpoint_control);
+
+    let output = directory.scan(&["--verbose"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Analyzed 3 file(s); 1 finding(s); 0 analysis error(s)."));
+    assert!(stdout.contains(
+        "with-breakpoint.vi: error [no-breakpoints]: Remove all block diagram breakpoints before committing this VI."
+    ));
+    assert!(!stdout.contains("without-breakpoint.vi:"));
+    assert!(!stdout.contains("control.ctl:"));
+}
+
+#[test]
 fn scans_xml_and_applies_yaml_severity_and_cli_threshold() {
     let directory = TestDirectory::new();
     directory.write(
@@ -434,7 +457,7 @@ fn disabling_all_rules_skips_parsing() {
     directory.write("broken.vi", []);
     let config = directory.write(
         "checks.yaml",
-        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n",
+        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n  no-breakpoints:\n    enabled: false\n",
     );
     let output = directory.configured_scan(&config, &[]);
     assert_eq!(output.status.code(), Some(0));
@@ -570,6 +593,7 @@ fn lists_rules_and_handles_an_empty_folder() {
     assert!(!rules.contains("minimum-saved-version"));
     assert!(rules.contains("file-description [warning]"));
     assert!(rules.contains("debugging-status [warning]"));
+    assert!(rules.contains("no-breakpoints [error]"));
     let directory = TestDirectory::new();
     for args in [vec![], vec!["--verbose"]] {
         let output = directory.scan(&args);
@@ -841,7 +865,7 @@ fn ci_reports_cover_empty_scans_disabled_rules_and_partial_analysis_failures() {
     }
     let config = directory.write(
         "checks.yaml",
-        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n",
+        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n  no-breakpoints:\n    enabled: false\n",
     );
     let output = directory.configured_scan(
         &config,
