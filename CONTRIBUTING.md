@@ -61,3 +61,72 @@ WireLint targets both Windows and Linux. Prefer cross-platform Rust APIs, avoid 
 Read relevant decision records in `docs/` before making design or architecture changes. Record new project, design, or architecture decisions in `docs/`, including context, alternatives considered, and consequences.
 
 Keep changes focused and document user-visible behavior changes.
+
+## Releases and installers
+
+[cargo-dist](https://axodotdev.github.io/cargo-dist/) manages the GitHub release
+workflow, archives, checksums, and Windows MSI. A
+[`cargo-deb` build hook](packaging/build-deb.sh) adds the Debian package through
+cargo-dist's `extra-artifacts` setting. Packages are published only to GitHub
+Releases; no package registry credentials are needed.
+
+### Prepare a release
+
+1. Update `[package].version` in `Cargo.toml`. Use a stable `major.minor.patch`
+   version representable by MSI: major and minor at most 255, patch at most
+   65535.
+2. Run `cargo check` to update the root package version in `Cargo.lock`.
+   Do not use `cargo update` just to bump the project version; it can also
+   update dependencies.
+3. Run the normal checks above and `dist plan --tag v<version>` using the pinned
+   cargo-dist version. Review and commit the version changes, then push them.
+4. Create and push a matching tag, for example:
+
+   ```text
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+
+The generated release workflow checks that the tag selects the Cargo package
+version, runs formatting, tests, and Clippy on Windows and Linux, builds the
+packages, and publishes them with checksums. Cargo commands use `--locked`
+in our build hook and checks to prevent dependency resolution during those
+steps. CI never bumps versions or commits files for you.
+
+Pull requests build release artifacts too, including the Debian package's
+extraction smoke test, but do not publish a release. This is intentionally more
+expensive than cargo-dist's default plan-only PR mode.
+
+### Maintain packaging
+
+Install the version pinned in `dist-workspace.toml`:
+
+```text
+cargo install cargo-dist --version 0.34.0 --locked
+dist init --yes
+dist generate --check
+dist plan
+```
+
+Edit `dist-workspace.toml`, package metadata, or `.github/release-setup.yml`
+and regenerate; do not hand-edit `.github/workflows/release.yml` or
+`wix/main.wxs`. Keep the WiX upgrade and PATH GUIDs in `Cargo.toml` stable across
+releases so upgrades refer to the same installed application.
+
+On Windows, `dist build --artifacts local --target x86_64-pc-windows-msvc`
+builds the MSI and ZIP. cargo-dist currently requires WiX 3, not modern WiX,
+for this backend. Its generated CI uses the Windows 2022 runner and requests
+WiX 3.14.1 through Chocolatey. WiX 3 is out of support; follow upstream support
+for a modern WiX backend when upgrading cargo-dist. No separate custom installer
+implementation is maintained here.
+
+On Debian/Ubuntu, `bash packaging/build-deb.sh` installs the pinned cargo-deb
+tool, builds the package with the `dist` profile, and tests the extracted
+executable and required notices without modifying the system installation.
+It also generates the Debian package's separate SHA-256 checksum file.
+Running `dist build --artifacts global` on Linux exercises the same hook as CI.
+Local builds require Rust, a C toolchain, and Debian packaging tools.
+
+The release workflow needs GitHub Actions enabled and permission for its
+`GITHUB_TOKEN` to write repository contents. Review failed workflow runs before
+retrying; never move a published release tag to different source code.

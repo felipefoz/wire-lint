@@ -3,6 +3,30 @@ name = "wirelint"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+description = "Independent static analysis for LabVIEW files"
+repository = "https://github.com/felipefoz/wire-lint"
+readme = "README.md"
+authors = ["WireLint contributors <felipefoz@gmail.com>"]
+
+[package.metadata.deb]
+maintainer = "WireLint contributors <felipefoz@gmail.com>"
+copyright = "2026 WireLint contributors"
+license-file = ["LICENSE", "0"]
+section = "devel"
+priority = "optional"
+depends = "$auto"
+assets = [
+    ["target/release/wirelint", "usr/bin/wirelint", "755"],
+    ["README.md", "usr/share/doc/wirelint/README.md", "644"],
+    ["LICENSE", "usr/share/doc/wirelint/LICENSE", "644"],
+    ["THIRD_PARTY_NOTICES.md", "usr/share/doc/wirelint/THIRD_PARTY_NOTICES.md", "644"],
+]
+
+[package.metadata.wix]
+upgrade-guid = "DD75C4E4-BC5F-41C5-8053-36584EA7A1B8"
+path-guid = "F01D3E10-263B-4956-9C5E-B5DDCF9270E5"
+license = "LICENSE"
+eula = false
 
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }
@@ -12,3 +36,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml_ng = "0.10"
 sha2 = "0.10"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

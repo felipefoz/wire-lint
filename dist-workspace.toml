@@ -1,0 +1,27 @@
+[workspace]
+members = ["cargo:."]
+
+# Config for 'dist'
+[dist]
+# The preferred dist version to use in CI (Cargo.toml SemVer syntax)
+cargo-dist-version = "0.34.0"
+# CI backends to support
+ci = "github"
+# Where to host releases
+hosting = "github"
+# The installers to generate for each app
+installers = ["msi"]
+# Target platforms to build apps for (Rust target-triple syntax)
+targets = ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+# Extra static files to include in each App (path relative to this Cargo.toml's dir)
+include = ["THIRD_PARTY_NOTICES.md"]
+# Which actions to run on pull requests
+pr-run-mode = "upload"
+github-build-setup = "../release-setup.yml"
+
+[dist.dependencies.chocolatey]
+wixtoolset = "3.14.1"
+
+[[dist.extra-artifacts]]
+artifacts = ["target/debian/wirelint_amd64.deb", "target/debian/wirelint_amd64.deb.sha256"]
+build = ["bash", "packaging/build-deb.sh"]
