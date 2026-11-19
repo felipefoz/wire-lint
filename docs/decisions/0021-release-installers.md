@@ -44,8 +44,11 @@ built before release. Keep generated files under cargo-dist's management.
 
 - Most release logic is upstream-generated. Our only packaging build script is
   the Debian extra-artifact hook; no runtime Rust dependencies are added.
-- cargo-dist's MSI backend currently uses the unsupported WiX 3 toolchain;
-  request WiX 3.14.1 explicitly through its Chocolatey dependency configuration.
+- cargo-dist's MSI backend currently uses the unsupported WiX 3 toolchain
+  preinstalled on the Windows 2022 runner. Do not add a Chocolatey dependency
+  pin for it: the initial release failed because the image already contained
+  package revision `3.14.1.20250415`, which Chocolatey considers newer than
+  the requested `3.14.1`.
   Accept this upstream limitation rather than forking its installer machinery;
   revisit it when upgrading cargo-dist. Stable upgrade/PATH GUIDs are retained
   in the Cargo metadata.

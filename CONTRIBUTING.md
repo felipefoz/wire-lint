@@ -115,10 +115,11 @@ releases so upgrades refer to the same installed application.
 
 On Windows, `dist build --artifacts local --target x86_64-pc-windows-msvc`
 builds the MSI and ZIP. cargo-dist currently requires WiX 3, not modern WiX,
-for this backend. Its generated CI uses the Windows 2022 runner and requests
-WiX 3.14.1 through Chocolatey. WiX 3 is out of support; follow upstream support
-for a modern WiX backend when upgrading cargo-dist. No separate custom installer
-implementation is maintained here.
+for this backend. Its generated CI uses the WiX 3 toolchain preinstalled on the
+Windows 2022 runner. Do not request an older Chocolatey package revision:
+Chocolatey treats that as a downgrade and fails. WiX 3 is out of support; follow
+upstream support for a modern WiX backend when upgrading cargo-dist. No separate
+custom installer implementation is maintained here.
 
 On Debian/Ubuntu, `bash packaging/build-deb.sh` installs the pinned cargo-deb
 tool, builds the package with the `dist` profile, and tests the extracted

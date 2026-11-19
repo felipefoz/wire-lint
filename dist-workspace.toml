@@ -19,9 +19,6 @@ include = ["THIRD_PARTY_NOTICES.md"]
 pr-run-mode = "upload"
 github-build-setup = "../release-setup.yml"
 
-[dist.dependencies.chocolatey]
-wixtoolset = "3.14.1"
-
 [[dist.extra-artifacts]]
 artifacts = ["target/debian/wirelint_amd64.deb", "target/debian/wirelint_amd64.deb.sha256"]
 build = ["bash", "packaging/build-deb.sh"]
