@@ -73,6 +73,9 @@ pub struct FileFacts {
     pub orphaned_vi: Option<bool>,
     /// Whether an `.lvclass` has nonempty content in its root geneology property.
     pub has_mutation_history: Option<bool>,
+    /// Each front-panel terminal's icon-style flag, in heap order; absent for
+    /// controls and XML containers.
+    pub terminal_icon_styles: Option<Vec<bool>>,
 }
 
 /// Reads a VI-family RSRC file or an XML project/library/class document.

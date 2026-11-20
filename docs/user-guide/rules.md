@@ -22,6 +22,7 @@ and shared `enabled` and `severity` configuration options. See
 - [password-set](#password-set)
 - [orphaned-vi](#orphaned-vi)
 - [class-mutation-history](#class-mutation-history)
+- [terminal-style](#terminal-style)
 
 ## Execution order
 
@@ -402,6 +403,47 @@ Use `--verbose` to show findings:
 ```text
 Example.lvclass: warning [class-mutation-history]: This LabVIEW class contains mutation-history content in its NI.LVClass.Geneology XML property.
 ```
+
+## `terminal-style`
+
+Requires every front-panel control/indicator terminal on a VI's block
+diagram to use the same preferred display style: **icon style** (the
+control's own icon) or **data-type style** (a compact glyph for its data
+type), set per terminal with the block diagram's **View As Icon**
+context-menu item. The rule is enabled by default with `warning` severity,
+defaults to requiring data-type style, and applies to VI and VI-template
+files (`.vi`, `.vit`, `.vim`); controls have no block diagram and are
+skipped.
+
+```yaml
+rules:
+  terminal-style:
+    enabled: true
+    severity: warning
+    preferred-style: data-type
+```
+
+Set `preferred-style: icon` to require icon style instead. This option
+accepts only `data-type` or `icon`; it is separate from the rule's Boolean
+`enabled` option. A VI with zero or one terminal cannot have a mismatched
+terminal and always passes.
+
+Use `--verbose` to show findings:
+
+```text
+Example.vi: warning [terminal-style]: This VI has 2 terminal(s) not using data type display. Disable View As Icon on the block diagram for the affected controls and indicators.
+```
+
+### How the setting is read
+
+Each front-panel terminal is a `fPTerm` object in the VI's compressed
+version-b block diagram heap (`BDHb`). Bit 26 (`0x04000000`) of its 32-bit
+`objFlags` field is set for icon-style display and clear for data-type
+style; other bits are unrelated to this rule. The reader reuses the same
+bounded `BDHb` heap walk as [bookmark directives](#skipping-a-rule-with-a-bookmark);
+the same format limitations apply, including the 64 MiB heap size bound and
+support for only the compressed version-b format. WireLint does not change
+any terminal's display style.
 
 ## Adding a built-in rule
 

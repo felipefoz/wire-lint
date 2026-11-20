@@ -194,6 +194,106 @@ fn put_u32(bytes: &mut [u8], offset: usize, value: u32) {
     bytes[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
 }
 
+/// Appends one BDHb heap node: open/self-closing/close scope 0/1/2.
+///
+/// Mirrors the private encoding covered at the unit level in
+/// `src/formats/heap.rs`, so integration tests can build minimal diagrams
+/// without exporting that encoder from the crate.
+fn heap_node(heap: &mut Vec<u8>, tag: i32, scope: u8, class: Option<i16>, content: &[u8]) {
+    let tag = (tag + 31) as u16;
+    let size = if content.is_empty() { 0 } else { 6 };
+    heap.push((size << 5) | (u8::from(class.is_some()) << 4) | (scope << 2) | (tag >> 8) as u8);
+    heap.push(tag as u8);
+    if let Some(class) = class {
+        heap.extend_from_slice(&[1, 0xfe]);
+        heap.extend_from_slice(&class.to_be_bytes());
+    }
+    if !content.is_empty() {
+        heap.push(content.len() as u8);
+        heap.extend_from_slice(content);
+    }
+}
+
+/// Appends one front-panel terminal (`fPTerm`) with the given `objFlags`.
+fn heap_terminal(heap: &mut Vec<u8>, object_flags: u32) {
+    const ARRAY_ELEMENT: i32 = -6;
+    const FP_TERM: i32 = 22;
+    const OBJ_FLAGS: i32 = 172;
+    heap_node(heap, ARRAY_ELEMENT, 0, Some(FP_TERM as i16), &[]);
+    heap_node(heap, OBJ_FLAGS, 1, None, &object_flags.to_be_bytes());
+    heap_node(heap, ARRAY_ELEMENT, 2, None, &[]);
+}
+
+#[test]
+fn terminal_style_defaults_to_requiring_data_type_style_and_honors_configuration() {
+    const ICON_STYLE: u32 = 0x0402_0040;
+    const DATA_STYLE: u32 = 0x0002_0040;
+    let directory = TestDirectory::new();
+
+    let mut all_icon = Vec::new();
+    heap_terminal(&mut all_icon, ICON_STYLE);
+    heap_terminal(&mut all_icon, ICON_STYLE);
+    directory.write(
+        "all-icon.vi",
+        vi_with_diagram(true, b"LVIN", None, None, Some(&all_icon)),
+    );
+
+    let mut all_data = Vec::new();
+    heap_terminal(&mut all_data, DATA_STYLE);
+    directory.write(
+        "all-data.vi",
+        vi_with_diagram(true, b"LVIN", None, None, Some(&all_data)),
+    );
+
+    let mut mixed = Vec::new();
+    heap_terminal(&mut mixed, ICON_STYLE);
+    heap_terminal(&mut mixed, DATA_STYLE);
+    directory.write(
+        "mixed.vi",
+        vi_with_diagram(true, b"LVIN", None, None, Some(&mixed)),
+    );
+
+    let output = directory.scan(&["--fail-on", "warning", "--verbose"]);
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains(
+            "all-icon.vi: warning [terminal-style]: This VI has 2 terminal(s) not using data type display."
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            "mixed.vi: warning [terminal-style]: This VI has 1 terminal(s) not using data type display."
+        ),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("all-data.vi: warning [terminal-style]"));
+    assert!(stdout.contains("terminal-style: 2 finding(s)."));
+
+    let config = directory.write(
+        "icon-preferred.yaml",
+        "version: 1\nrules:\n  terminal-style:\n    preferred-style: icon\n",
+    );
+    let output = directory.configured_scan(&config, &["--fail-on", "warning", "--verbose"]);
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains(
+            "all-data.vi: warning [terminal-style]: This VI has 1 terminal(s) not using icon display."
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            "mixed.vi: warning [terminal-style]: This VI has 1 terminal(s) not using icon display."
+        ),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("all-icon.vi: warning [terminal-style]"));
+    assert!(stdout.contains("terminal-style: 2 finding(s)."));
+}
+
 #[test]
 fn bookmark_skips_only_the_named_enabled_rule_and_is_always_reported() {
     let directory = TestDirectory::new();
@@ -884,7 +984,7 @@ fn disabling_all_rules_skips_parsing() {
     directory.write("broken.vi", []);
     let config = directory.write(
         "checks.yaml",
-        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n  no-breakpoints:\n    enabled: false\n  auto-error-handling:\n    enabled: false\n  password-set:\n    enabled: false\n  orphaned-vi:\n    enabled: false\n  class-mutation-history:\n    enabled: false\n",
+        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n  no-breakpoints:\n    enabled: false\n  auto-error-handling:\n    enabled: false\n  password-set:\n    enabled: false\n  orphaned-vi:\n    enabled: false\n  class-mutation-history:\n    enabled: false\n  terminal-style:\n    enabled: false\n",
     );
     let output = directory.configured_scan(&config, &[]);
     assert_eq!(output.status.code(), Some(0));
@@ -1300,7 +1400,7 @@ fn ci_reports_cover_empty_scans_disabled_rules_and_partial_analysis_failures() {
     }
     let config = directory.write(
         "checks.yaml",
-        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n  no-breakpoints:\n    enabled: false\n  auto-error-handling:\n    enabled: false\n  password-set:\n    enabled: false\n  orphaned-vi:\n    enabled: false\n  class-mutation-history:\n    enabled: false\n",
+        "rules:\n  separate-compiled-code:\n    enabled: false\n  saved-version:\n    enabled: false\n  file-description:\n    enabled: false\n  debugging-status:\n    enabled: false\n  no-breakpoints:\n    enabled: false\n  auto-error-handling:\n    enabled: false\n  password-set:\n    enabled: false\n  orphaned-vi:\n    enabled: false\n  class-mutation-history:\n    enabled: false\n  terminal-style:\n    enabled: false\n",
     );
     let output = directory.configured_scan(
         &config,

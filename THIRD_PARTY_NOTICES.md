@@ -67,6 +67,26 @@ and owned labels was checked against
 [lvkit](https://github.com/pragmatest-dev/lvkit)'s block-diagram parser. These were
 used as format descriptions; no implementation code or fixtures were copied.
 
+The `terminal-style` rule reuses that same `BDHb` heap reader,
+extended to also recognize `fPTerm` terminal objects. The class and field
+identifiers come from pylabview's `LVheap.py`: `SL_CLASS_TAGS.SL__fPTerm`
+(value 22) and `OBJ_FIELD_TAGS.OF__objFlags` (value 172, a standard
+variable-length integer field). Neither `LVheap.py` nor `LVparts.py`'s
+`OBJ_FLAGS` enum documents which `objFlags` bit selects icon-style versus
+data-type-style terminal display — `LVparts.py` lists it as
+`OFFBit26 = 1 << 26  # unknown`. That bit's meaning was determined through
+original experimentation on 2026-11-20: two pairs of minimal VIs (one
+numeric control; one string and one numeric control) were saved with a
+terminal's **View As Icon** state toggled, then compared using pylabview's
+`readRSRC.py -x` extractor (used here only as a read-only research tool, not
+vendored or added as a WireLint dependency). The only consistent difference
+on the terminal's `objFlags` field was bit `0x04000000`, set for icon style
+and clear for data-type style, corroborated by the terminal's recorded
+bounding box (icon-sized square versus a narrow data-type glyph) across both
+a numeric and a string control. No implementation code was copied; only
+pylabview's tag/field numbering scheme was consulted, and the bit's meaning
+is WireLint's own finding, not pylabview's.
+
 pylabview attributes these source files to Mefistotelis and distributes them
 under the MIT License. Refer to its
 [license](https://github.com/mefistotelis/pylabview/blob/master/LICENSE).

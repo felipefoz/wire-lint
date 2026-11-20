@@ -58,3 +58,10 @@ rules:
   class-mutation-history:
     enabled: true
     severity: warning
+  # Require every control and indicator terminal on a VI's block diagram to
+  # use the same preferred display style. Use icon to require View As Icon
+  # instead.
+  terminal-style:
+    enabled: true
+    severity: warning
+    preferred-style: data-type

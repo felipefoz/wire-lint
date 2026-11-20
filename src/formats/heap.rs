@@ -1,4 +1,5 @@
-//! Bounded decoding of version-b block-diagram heaps for free-label bookmarks.
+//! Bounded decoding of version-b block-diagram heaps for free-label bookmarks
+//! and front-panel terminal display styles.
 
 use super::{invalid, rsrc};
 use flate2::bufread::ZlibDecoder;
@@ -14,6 +15,12 @@ const NODE_LIST: i32 = 164;
 const Z_PLANE_LIST: i32 = 303;
 const TEXT_RECORD: i32 = 270;
 const TEXT: i32 = 3;
+/// `SL__fPTerm`: a front-panel control/indicator's terminal on the block diagram.
+const FP_TERM: i32 = 22;
+/// `OF__objFlags`: the terminal's object-flags field, including its display style.
+const OBJ_FLAGS: i32 = 172;
+/// Terminal object-flags bit selecting icon-style display; clear is data-type style.
+const ICON_STYLE_FLAG: u32 = 0x0400_0000;
 
 #[derive(Clone, Copy)]
 struct Node {
@@ -22,13 +29,17 @@ struct Node {
 }
 
 /// Reads the sole compressed BDHb section, rejecting malformed or oversized heaps.
-pub(super) fn read_bookmarks(
+///
+/// Returns free-label bookmarks and, in terminal order, each front-panel
+/// terminal's icon-style flag (`true` for icon style, `false` for data-type
+/// style).
+pub(super) fn read_bdhb(
     table: &[u8],
     table_size: usize,
     data: &[u8],
     count_minus_one: usize,
     section_offset: usize,
-) -> io::Result<Vec<Vec<u8>>> {
+) -> io::Result<(Vec<Vec<u8>>, Vec<bool>)> {
     if count_minus_one != 0 || section_offset < table_size {
         return Err(invalid("unsupported BDHb section table"));
     }
@@ -61,11 +72,13 @@ pub(super) fn read_bookmarks(
     parse_heap(&decoded[4..])
 }
 
-/// Walks heap scopes so only diagram-owned free labels provide bookmarks.
-fn parse_heap(bytes: &[u8]) -> io::Result<Vec<Vec<u8>>> {
+/// Walks heap scopes so only diagram-owned free labels and terminal objects
+/// contribute facts.
+fn parse_heap(bytes: &[u8]) -> io::Result<(Vec<Vec<u8>>, Vec<bool>)> {
     let mut cursor = 0;
     let mut stack: Vec<Node> = Vec::new();
     let mut bookmarks = Vec::new();
+    let mut terminal_icon_styles = Vec::new();
     while cursor < bytes.len() {
         let header = take(bytes, &mut cursor, 2)?;
         let size = header[0] >> 5;
@@ -110,6 +123,13 @@ fn parse_heap(bytes: &[u8]) -> io::Result<Vec<Vec<u8>>> {
                         bookmarks.push(content.to_vec());
                     }
                 }
+                if tag == OBJ_FLAGS
+                    && stack.last().is_some_and(|parent| {
+                        parent.tag == ARRAY_ELEMENT && parent.class == Some(FP_TERM)
+                    })
+                {
+                    terminal_icon_styles.push(object_flags(content)? & ICON_STYLE_FLAG != 0);
+                }
                 if scope == 0 {
                     stack.push(Node { tag, class });
                 }
@@ -128,7 +148,17 @@ fn parse_heap(bytes: &[u8]) -> io::Result<Vec<Vec<u8>>> {
     if !stack.is_empty() {
         return Err(invalid("unclosed BDHb heap scope"));
     }
-    Ok(bookmarks)
+    Ok((bookmarks, terminal_icon_styles))
+}
+
+/// Reads a terminal's `objFlags` field as a big-endian unsigned integer.
+fn object_flags(content: &[u8]) -> io::Result<u32> {
+    if content.len() > 4 {
+        return Err(invalid("oversized BDHb terminal objFlags field"));
+    }
+    let mut bytes = [0; 4];
+    bytes[4 - content.len()..].copy_from_slice(content);
+    Ok(u32::from_be_bytes(bytes))
 }
 
 /// Advances through a bounded heap range.
@@ -206,6 +236,12 @@ mod tests {
         node(heap, parent, 2, None, &[]);
     }
 
+    fn terminal(heap: &mut Vec<u8>, object_flags: u32) {
+        node(heap, ARRAY_ELEMENT, 0, Some(FP_TERM as i16), &[]);
+        node(heap, OBJ_FLAGS, 1, None, &object_flags.to_be_bytes());
+        node(heap, ARRAY_ELEMENT, 2, None, &[]);
+    }
+
     #[test]
     fn reads_only_diagram_free_labels_including_nested_diagrams() {
         let mut heap = Vec::new();
@@ -219,11 +255,61 @@ mod tests {
         node(&mut heap, ARRAY_ELEMENT, 2, None, &[]);
         node(&mut heap, 63, 2, None, &[]);
         node(&mut heap, -7, 2, None, &[]);
+        let (bookmarks, terminal_icon_styles) = parse_heap(&heap).unwrap();
         assert_eq!(
-            parse_heap(&heap).unwrap(),
+            bookmarks,
             vec![b"#wirelint file-description".to_vec(), b"#other".to_vec()]
         );
+        assert!(terminal_icon_styles.is_empty());
         heap.pop();
+        assert!(parse_heap(&heap).is_err());
+    }
+
+    #[test]
+    fn reads_terminal_icon_styles_in_order_alongside_bookmarks() {
+        let mut heap = Vec::new();
+        node(&mut heap, -7, 0, Some(DIAGRAM as i16), &[]);
+        label(&mut heap, Z_PLANE_LIST, b"#wirelint file-description");
+        terminal(&mut heap, 0x0402_0040); // icon style, matches the confirmed sample bit
+        terminal(&mut heap, 0x0002_0040); // data-type style, bit clear
+        terminal(&mut heap, 0x0400_0000); // icon style, no other bits set
+        node(&mut heap, -7, 2, None, &[]);
+        let (bookmarks, terminal_icon_styles) = parse_heap(&heap).unwrap();
+        assert_eq!(bookmarks, vec![b"#wirelint file-description".to_vec()]);
+        assert_eq!(terminal_icon_styles, vec![true, false, true]);
+    }
+
+    #[test]
+    fn ignores_obj_flags_outside_a_terminal_array_element() {
+        let mut heap = Vec::new();
+        node(&mut heap, -7, 0, Some(DIAGRAM as i16), &[]);
+        node(
+            &mut heap,
+            OBJ_FLAGS,
+            1,
+            None,
+            &ICON_STYLE_FLAG.to_be_bytes(),
+        );
+        node(&mut heap, ARRAY_ELEMENT, 0, Some(LABEL as i16), &[]);
+        node(
+            &mut heap,
+            OBJ_FLAGS,
+            1,
+            None,
+            &ICON_STYLE_FLAG.to_be_bytes(),
+        );
+        node(&mut heap, ARRAY_ELEMENT, 2, None, &[]);
+        node(&mut heap, -7, 2, None, &[]);
+        let (_, terminal_icon_styles) = parse_heap(&heap).unwrap();
+        assert!(terminal_icon_styles.is_empty());
+    }
+
+    #[test]
+    fn rejects_oversized_terminal_obj_flags() {
+        let mut heap = Vec::new();
+        node(&mut heap, ARRAY_ELEMENT, 0, Some(FP_TERM as i16), &[]);
+        node(&mut heap, OBJ_FLAGS, 1, None, &[0, 0, 0, 0, 1]);
+        node(&mut heap, ARRAY_ELEMENT, 2, None, &[]);
         assert!(parse_heap(&heap).is_err());
     }
 

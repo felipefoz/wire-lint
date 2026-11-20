@@ -1,6 +1,6 @@
 //! Built-in rule contract and registry, independent of file formats and output.
 
-use crate::config::{DebuggingState, RuleConfig};
+use crate::config::{DebuggingState, RuleConfig, TerminalDisplayStyle};
 use crate::formats::{FileFacts, Version};
 use serde::Deserialize;
 use std::fmt;
@@ -47,6 +47,7 @@ pub static BUILT_INS: &[&dyn Rule] = &[
     &PasswordSet,
     &OrphanedVi,
     &ClassMutationHistory,
+    &TerminalStyle,
 ];
 
 /// Default minimum release for saved LabVIEW files.
@@ -301,6 +302,42 @@ impl Rule for ClassMutationHistory {
     }
 }
 
+/// Requires every terminal on a VI's block diagram to match a preferred display style.
+struct TerminalStyle;
+
+impl Rule for TerminalStyle {
+    fn id(&self) -> &'static str {
+        "terminal-style"
+    }
+
+    fn description(&self) -> &'static str {
+        "Require a preferred terminal display style (default: data type) for every control and indicator"
+    }
+
+    fn default_severity(&self) -> Severity {
+        Severity::Warning
+    }
+
+    fn check(&self, facts: &FileFacts, options: Option<&RuleConfig>) -> Option<String> {
+        let styles = facts.terminal_icon_styles.as_ref()?;
+        let preferred_icon = options
+            .and_then(|options| options.preferred_style)
+            .unwrap_or_default()
+            == TerminalDisplayStyle::Icon;
+        let mismatched = styles
+            .iter()
+            .filter(|icon_style| **icon_style != preferred_icon)
+            .count();
+        (mismatched > 0).then(|| {
+            format!(
+                "This VI has {mismatched} terminal(s) not using {} display. {} View As Icon on the block diagram for the affected controls and indicators.",
+                if preferred_icon { "icon" } else { "data type" },
+                if preferred_icon { "Enable" } else { "Disable" },
+            )
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,6 +359,7 @@ mod tests {
                     library_members: None,
                     orphaned_vi: None,
                     has_mutation_history: None,
+                    terminal_icon_styles: None,
                 },
                 None
             )
@@ -341,6 +379,7 @@ mod tests {
                     library_members: None,
                     orphaned_vi: None,
                     has_mutation_history: None,
+                    terminal_icon_styles: None,
                 },
                 None
             )
@@ -393,6 +432,7 @@ mod tests {
                 library_members: None,
                 orphaned_vi: None,
                 has_mutation_history: None,
+                terminal_icon_styles: None,
             };
             assert_eq!(rule.check(&facts, None).is_some(), violation);
         }
@@ -491,6 +531,7 @@ mod tests {
                 library_members: None,
                 orphaned_vi: None,
                 has_mutation_history: None,
+                terminal_icon_styles: None,
             };
             let options = RuleConfig {
                 enabled: true,
@@ -498,6 +539,7 @@ mod tests {
                 minimum_version: minimum,
                 maximum_version: maximum,
                 fail_when: None,
+                preferred_style: None,
             };
             assert_eq!(
                 SavedVersion.check(&facts, Some(&options)).as_deref(),
@@ -523,6 +565,7 @@ mod tests {
                 library_members: None,
                 orphaned_vi: None,
                 has_mutation_history: None,
+                terminal_icon_styles: None,
             };
             assert_eq!(rule.check(&facts, None).is_some(), violation);
         }
@@ -543,6 +586,7 @@ mod tests {
                 library_members: None,
                 orphaned_vi: None,
                 has_mutation_history: None,
+                terminal_icon_styles: None,
             };
             assert_eq!(
                 DebuggingStatus.check(&facts, None).is_some(),
@@ -555,6 +599,7 @@ mod tests {
                     minimum_version: None,
                     maximum_version: None,
                     fail_when: Some(fail_when),
+                    preferred_style: None,
                 };
                 let finding = DebuggingStatus.check(&facts, Some(&options));
                 assert_eq!(
@@ -589,6 +634,7 @@ mod tests {
                 library_members: None,
                 orphaned_vi: None,
                 has_mutation_history: None,
+                terminal_icon_styles: None,
             };
             assert_eq!(NoBreakpoints.check(&facts, None).is_some(), expected);
         }
@@ -610,6 +656,7 @@ mod tests {
                 library_members: None,
                 orphaned_vi: None,
                 has_mutation_history: None,
+                terminal_icon_styles: None,
             };
             assert_eq!(PasswordSet.check(&facts, None).is_some(), expected);
         }
@@ -633,6 +680,7 @@ mod tests {
                 library_members: None,
                 orphaned_vi: None,
                 has_mutation_history: None,
+                terminal_icon_styles: None,
             };
             assert_eq!(AutoErrorHandling.check(&facts, None).is_some(), expected);
         }
@@ -654,6 +702,7 @@ mod tests {
                 library_members: None,
                 orphaned_vi,
                 has_mutation_history: None,
+                terminal_icon_styles: None,
             };
             assert_eq!(OrphanedVi.check(&facts, None).is_some(), expected);
         }
@@ -677,8 +726,76 @@ mod tests {
                 library_members: None,
                 orphaned_vi: None,
                 has_mutation_history,
+                terminal_icon_styles: None,
             };
             assert_eq!(ClassMutationHistory.check(&facts, None).is_some(), expected);
+        }
+    }
+
+    #[test]
+    fn terminal_style_rule_defaults_to_requiring_data_type_style() {
+        assert_eq!(TerminalStyle.default_severity(), Severity::Warning);
+        for (terminal_icon_styles, expected) in [
+            (None, false),
+            (Some(vec![]), false),
+            (Some(vec![false]), false),
+            (Some(vec![false, false]), false),
+            (Some(vec![true]), true),
+            (Some(vec![false, true]), true),
+        ] {
+            let facts = FileFacts {
+                separate_compiled_code: true,
+                has_description: None,
+                saved_version: None,
+                debugging_enabled: None,
+                has_breakpoints: None,
+                auto_error_handling: None,
+                has_password: None,
+                linked_library: None,
+                library_members: None,
+                orphaned_vi: None,
+                has_mutation_history: None,
+                terminal_icon_styles,
+            };
+            assert_eq!(TerminalStyle.check(&facts, None).is_some(), expected);
+        }
+    }
+
+    #[test]
+    fn terminal_style_rule_honors_a_configured_preferred_style() {
+        for (preferred_style, terminal_icon_styles, expected) in [
+            (TerminalDisplayStyle::Icon, vec![true, true], false),
+            (TerminalDisplayStyle::Icon, vec![true, false], true),
+            (TerminalDisplayStyle::DataType, vec![false, false], false),
+            (TerminalDisplayStyle::DataType, vec![true, false], true),
+        ] {
+            let facts = FileFacts {
+                separate_compiled_code: true,
+                has_description: None,
+                saved_version: None,
+                debugging_enabled: None,
+                has_breakpoints: None,
+                auto_error_handling: None,
+                has_password: None,
+                linked_library: None,
+                library_members: None,
+                orphaned_vi: None,
+                has_mutation_history: None,
+                terminal_icon_styles: Some(terminal_icon_styles),
+            };
+            let options = RuleConfig {
+                enabled: true,
+                severity: None,
+                minimum_version: None,
+                maximum_version: None,
+                fail_when: None,
+                preferred_style: Some(preferred_style),
+            };
+            assert_eq!(
+                TerminalStyle.check(&facts, Some(&options)).is_some(),
+                expected,
+                "{preferred_style:?}"
+            );
         }
     }
 }

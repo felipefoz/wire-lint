@@ -150,6 +150,7 @@ pub(super) fn read_facts_with_members(
             library_members,
             orphaned_vi: None,
             has_mutation_history,
+            terminal_icon_styles: None,
         },
         directives,
     ))

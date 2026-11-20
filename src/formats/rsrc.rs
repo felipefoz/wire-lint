@@ -105,6 +105,7 @@ pub(super) fn read_facts_with_orphaned_vi(
     let mut linked_library = None;
     let mut bookmarks = Vec::new();
     let mut diagram_seen = false;
+    let mut terminal_icon_styles = is_vi.then(Vec::new);
     for block in table[4..table_size].as_chunks::<12>().0 {
         if &block[..4] == b"LVSR" {
             if separate_compiled_code.is_some() || number(block, 4)? != 0 {
@@ -149,13 +150,15 @@ pub(super) fn read_facts_with_orphaned_vi(
                 return Err(invalid("duplicate BDHb block diagram"));
             }
             diagram_seen = true;
-            bookmarks = super::heap::read_bookmarks(
+            let (block_bookmarks, block_terminal_icon_styles) = super::heap::read_bdhb(
                 table,
                 table_size,
                 data,
                 number(block, 4)?,
                 number(block, 8)?,
             )?;
+            bookmarks = block_bookmarks;
+            terminal_icon_styles = Some(block_terminal_icon_styles);
         } else if is_vi && matches!(&block[..4], b"BDHP" | b"BDHc") {
             return Err(invalid(
                 "unsupported block diagram heap format for bookmark extraction",
@@ -221,6 +224,7 @@ pub(super) fn read_facts_with_orphaned_vi(
             library_members: None,
             orphaned_vi: None,
             has_mutation_history: None,
+            terminal_icon_styles,
         },
         bookmarks,
     ))

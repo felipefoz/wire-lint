@@ -39,6 +39,15 @@ pub enum DebuggingState {
     Disabled,
 }
 
+/// Preferred front-panel terminal display style, independent of rule enablement.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum TerminalDisplayStyle {
+    #[default]
+    DataType,
+    Icon,
+}
+
 /// Common options and validated options for individual built-in rules.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
@@ -52,6 +61,8 @@ pub struct RuleConfig {
     pub maximum_version: Option<Version>,
     #[serde(default, deserialize_with = "debugging_state")]
     pub fail_when: Option<DebuggingState>,
+    #[serde(default, deserialize_with = "terminal_display_style")]
+    pub preferred_style: Option<TerminalDisplayStyle>,
 }
 
 /// Rejects explicit nulls and invalid states rather than substituting a default.
@@ -60,6 +71,14 @@ where
     D: serde::Deserializer<'de>,
 {
     DebuggingState::deserialize(deserializer).map(Some)
+}
+
+/// Rejects explicit nulls and invalid styles rather than substituting a default.
+fn terminal_display_style<'de, D>(deserializer: D) -> Result<Option<TerminalDisplayStyle>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    TerminalDisplayStyle::deserialize(deserializer).map(Some)
 }
 
 /// Accepts only a quoted major.minor string, avoiding YAML number coercion.
@@ -233,6 +252,12 @@ impl Config {
                     format!("fail-when is not supported by rule '{id}'"),
                 ));
             }
+            if id != "terminal-style" && options.preferred_style.is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("preferred-style is not supported by rule '{id}'"),
+                ));
+            }
         }
         Ok(config)
     }
@@ -267,6 +292,10 @@ mod tests {
         assert_eq!(
             config.rules["debugging-status"].fail_when,
             Some(DebuggingState::default())
+        );
+        assert_eq!(
+            config.rules["terminal-style"].preferred_style,
+            Some(TerminalDisplayStyle::default())
         );
     }
 
@@ -448,6 +477,36 @@ mod tests {
         }
         assert!(
             Config::parse("rules:\n  separate-compiled-code:\n    fail-when: enabled\n").is_err()
+        );
+    }
+
+    #[test]
+    fn validates_rule_specific_preferred_terminal_style() {
+        for (value, expected) in [
+            ("data-type", TerminalDisplayStyle::DataType),
+            ("icon", TerminalDisplayStyle::Icon),
+        ] {
+            let config = Config::parse(&format!(
+                "rules:\n  terminal-style:\n    preferred-style: {value}\n"
+            ))
+            .unwrap();
+            assert_eq!(
+                config.rules["terminal-style"].preferred_style,
+                Some(expected)
+            );
+        }
+        for value in ["true", "false", "null", "0", "DataType", "other", "[]"] {
+            assert!(
+                Config::parse(&format!(
+                    "rules:\n  terminal-style:\n    preferred-style: {value}\n"
+                ))
+                .is_err(),
+                "{value}"
+            );
+        }
+        assert!(
+            Config::parse("rules:\n  separate-compiled-code:\n    preferred-style: icon\n")
+                .is_err()
         );
     }
 }
