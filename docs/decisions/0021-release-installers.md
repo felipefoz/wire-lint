@@ -24,8 +24,10 @@ notices without installing it on the build host.
 The hook supplies a separate SHA-256 file for the extra Debian artifact.
 
 Keep the Cargo package version as the source of truth. Maintainers update the
-manifest and lockfile, commit them, and push a matching tag. Release CI does
-not change versions or commit files. Initially document stable releases only,
+manifest and lockfile and commit them; see
+[0023-automated-changelog-and-tagging.md](0023-automated-changelog-and-tagging.md)
+for how the changelog and tag are produced from that commit. Release CI does
+not change `[package].version`. Initially document stable releases only,
 within Windows Installer's version limits.
 
 Run the existing Rust checks before local-artifact builds through cargo-dist's

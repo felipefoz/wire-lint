@@ -1,0 +1,68 @@
+name: Prepare Release
+
+# Runs when a version bump to Cargo.toml lands on main. Generates CHANGELOG.md
+# with git-cliff, commits it, and pushes the matching tag. The tag push then
+# triggers the cargo-dist-managed release workflow (.github/workflows/release.yml)
+# exactly as a manually pushed tag would.
+#
+# Pushes here use a PAT (secrets.RELEASE_PAT), not the default GITHUB_TOKEN:
+# GitHub does not let GITHUB_TOKEN-authored pushes trigger other workflows,
+# which would otherwise prevent the pushed tag from starting the release workflow.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - Cargo.toml
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-release:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: true
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - name: Determine version and tag
+        id: version
+        run: |
+          version=$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "(.*)"/\1/')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if tag already exists
+        id: check
+        run: |
+          if git ls-remote --tags origin "refs/tags/${{ steps.version.outputs.tag }}" | grep -q .; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate changelog
+        if: steps.check.outputs.exists == 'false'
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --tag ${{ steps.version.outputs.tag }} -o CHANGELOG.md
+
+      - name: Commit changelog and push tag
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if ! git diff --quiet -- CHANGELOG.md; then
+            git add CHANGELOG.md
+            git commit -m "chore(release): update changelog for ${{ steps.version.outputs.tag }}"
+          fi
+
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin HEAD:main "${{ steps.version.outputs.tag }}"

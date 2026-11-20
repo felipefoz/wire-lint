@@ -70,6 +70,10 @@ workflow, archives, checksums, and Windows MSI. A
 cargo-dist's `extra-artifacts` setting. Packages are published only to GitHub
 Releases; no package registry credentials are needed.
 
+[git-cliff](https://git-cliff.org/), configured in `cliff.toml`, generates
+`CHANGELOG.md` from Conventional Commits. cargo-dist reads the version section
+matching the pushed tag out of that file and uses it as the GitHub Release body.
+
 ### Prepare a release
 
 1. Update `[package].version` in `Cargo.toml`. Use a stable `major.minor.patch`
@@ -79,19 +83,29 @@ Releases; no package registry credentials are needed.
    Do not use `cargo update` just to bump the project version; it can also
    update dependencies.
 3. Run the normal checks above and `dist plan --tag v<version>` using the pinned
-   cargo-dist version. Review and commit the version changes, then push them.
-4. Create and push a matching tag, for example:
+   cargo-dist version. Review and commit the version changes, then push them
+   to `main`.
 
-   ```text
-   git tag v0.2.0
-   git push origin v0.2.0
-   ```
+Pushing a `Cargo.toml` change to `main` triggers
+`.github/workflows/prepare-release.yml`, which reads the new version, and,
+if a matching tag doesn't already exist, regenerates `CHANGELOG.md` with
+git-cliff, commits it, and pushes the `v<version>` tag. That tag push triggers
+the cargo-dist release workflow exactly as a manually pushed tag would: it
+checks that the tag selects the Cargo package version, runs formatting, tests,
+and Clippy on Windows and Linux, builds the packages, and publishes them with
+checksums. Cargo commands use `--locked` in our build hook and checks to
+prevent dependency resolution during those steps.
 
-The generated release workflow checks that the tag selects the Cargo package
-version, runs formatting, tests, and Clippy on Windows and Linux, builds the
-packages, and publishes them with checksums. Cargo commands use `--locked`
-in our build hook and checks to prevent dependency resolution during those
-steps. CI never bumps versions or commits files for you.
+Maintainers still own the version bump; CI never changes `[package].version`.
+Pushing a `Cargo.toml` change that doesn't alter the version (e.g. a dependency
+bump) is a no-op for `prepare-release.yml`, since the tag it would create
+already exists.
+
+`prepare-release.yml` pushes using a `RELEASE_PAT` repository secret (a
+fine-grained PAT scoped to this repo with Contents: Read and write) instead of
+the default `GITHUB_TOKEN`, because GitHub does not let `GITHUB_TOKEN`-authored
+pushes trigger other workflows, and the pushed tag needs to trigger the release
+workflow.
 
 Pull requests build release artifacts too, including the Debian package's
 extraction smoke test, but do not publish a release. This is intentionally more
