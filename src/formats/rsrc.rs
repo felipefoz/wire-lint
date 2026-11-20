@@ -28,8 +28,31 @@ pub(super) fn read_facts_with_password(
     read_description: bool,
     read_password: bool,
 ) -> io::Result<FileFacts> {
-    read_facts_with_orphaned_vi(bytes, read_version, read_description, read_password, false)
-        .map(|(facts, _)| facts)
+    read_facts_with_orphaned_vi(
+        bytes,
+        read_version,
+        read_description,
+        read_password,
+        false,
+        false,
+    )
+    .map(|(facts, _)| facts)
+}
+
+#[cfg(test)]
+pub(super) fn read_facts_with_connector_pane_pattern(
+    bytes: &[u8],
+    read_connector_pane_pattern: bool,
+) -> io::Result<FileFacts> {
+    read_facts_with_orphaned_vi(
+        bytes,
+        false,
+        false,
+        false,
+        false,
+        read_connector_pane_pattern,
+    )
+    .map(|(facts, _)| facts)
 }
 
 /// Extracts an owning-library path when orphaned-VI analysis is requested.
@@ -39,6 +62,7 @@ pub(super) fn read_facts_with_orphaned_vi(
     read_description: bool,
     read_password: bool,
     read_orphaned_vi: bool,
+    read_connector_pane_pattern: bool,
 ) -> io::Result<(FileFacts, Vec<Vec<u8>>)> {
     let first_header = slice(bytes, 0, 32)?;
     let mut header_offset = 0;
@@ -106,6 +130,10 @@ pub(super) fn read_facts_with_orphaned_vi(
     let mut bookmarks = Vec::new();
     let mut diagram_seen = false;
     let mut terminal_icon_styles = is_vi.then(Vec::new);
+    let mut conp_seen = false;
+    let mut conp_section = None;
+    let mut vctp_seen = false;
+    let mut vctp_section = None;
     for block in table[4..table_size].as_chunks::<12>().0 {
         if &block[..4] == b"LVSR" {
             if separate_compiled_code.is_some() || number(block, 4)? != 0 {
@@ -192,6 +220,18 @@ pub(super) fn read_facts_with_orphaned_vi(
                 number(block, 4)?,
                 number(block, 8)?,
             )?;
+        } else if read_connector_pane_pattern && is_vi && &block[..4] == b"CONP" {
+            if conp_seen {
+                return Err(invalid("duplicate CONP connector pane block"));
+            }
+            conp_seen = true;
+            conp_section = Some((number(block, 4)?, number(block, 8)?));
+        } else if read_connector_pane_pattern && is_vi && &block[..4] == b"VCTP" {
+            if vctp_seen {
+                return Err(invalid("duplicate VCTP consolidated type pool block"));
+            }
+            vctp_seen = true;
+            vctp_section = Some((number(block, 4)?, number(block, 8)?));
         }
     }
     let separate_compiled_code =
@@ -211,6 +251,16 @@ pub(super) fn read_facts_with_orphaned_vi(
     } else {
         None
     };
+    let connector_pane_pattern = if read_connector_pane_pattern && is_vi {
+        let conp = conp_section.ok_or_else(|| invalid("missing CONP connector pane block"))?;
+        let vctp =
+            vctp_section.ok_or_else(|| invalid("missing VCTP consolidated type pool block"))?;
+        Some(super::connector::read_pattern(
+            table, table_size, data, conp, vctp,
+        )?)
+    } else {
+        None
+    };
     Ok((
         FileFacts {
             separate_compiled_code,
@@ -225,6 +275,7 @@ pub(super) fn read_facts_with_orphaned_vi(
             orphaned_vi: None,
             has_mutation_history: None,
             terminal_icon_styles,
+            connector_pane_pattern,
         },
         bookmarks,
     ))
@@ -566,6 +617,87 @@ mod tests {
         bytes
     }
 
+    /// Zlib-codes a payload the way `BLOCK_CODING.ZLIB` sections are stored:
+    /// a 4-byte decompressed length, then a raw zlib stream.
+    fn zlib_coded(payload: &[u8]) -> Vec<u8> {
+        use flate2::Compression;
+        use flate2::write::ZlibEncoder;
+        use std::io::Write;
+
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(payload).unwrap();
+        let compressed = encoder.finish().unwrap();
+        let mut coded = (payload.len() as u32).to_be_bytes().to_vec();
+        coded.extend_from_slice(&compressed);
+        coded
+    }
+
+    /// Builds a one-entry VCTP payload (flat `Function` TypeDesc, then a
+    /// one-entry top-level list) carrying the given raw connector pane pattern.
+    fn connector_pane_vctp_payload(pattern: u16) -> Vec<u8> {
+        let mut function_body = 0u16.to_be_bytes().to_vec(); // zero clients
+        function_body.extend_from_slice(&0u16.to_be_bytes()); // fflags
+        function_body.extend_from_slice(&pattern.to_be_bytes());
+
+        let mut entry = ((4 + function_body.len()) as u16).to_be_bytes().to_vec();
+        entry.push(0); // flags
+        entry.push(0xF0); // TD_FULL_TYPE::Function
+        entry.extend_from_slice(&function_body);
+
+        let mut payload = 1u32.to_be_bytes().to_vec(); // one flat TypeDesc
+        payload.extend_from_slice(&entry);
+        payload.extend_from_slice(&1u16.to_be_bytes()); // one top-level entry
+        payload.extend_from_slice(&0u16.to_be_bytes()); // -> FlatTypeID 0
+        payload
+    }
+
+    /// Builds a VI/control RSRC with an `LVSR` block and, after it, `CONP`
+    /// (pointing at type index 1) and `VCTP` blocks describing one connector
+    /// pane pattern.
+    fn fixture_with_connector_pane(pattern: u16) -> Vec<u8> {
+        let conp_payload = 1u16.to_be_bytes();
+        let vctp_coded = zlib_coded(&connector_pane_vctp_payload(pattern));
+
+        let conp_data_offset = 72;
+        let vctp_data_offset = conp_data_offset + 4 + conp_payload.len();
+        let data_size = vctp_data_offset + 4 + vctp_coded.len();
+        let info_size = 52 + 4 + 36 + 60;
+        let info_offset = 32 + data_size;
+        let mut bytes = vec![0; info_offset + info_size];
+        for base in [0, info_offset] {
+            bytes[base..base + 16].copy_from_slice(b"RSRC\r\n\0\x03LVINLBVW");
+            put(&mut bytes, base + 16, info_offset as u32);
+            put(&mut bytes, base + 20, info_size as u32);
+            put(&mut bytes, base + 24, 32);
+            put(&mut bytes, base + 28, data_size as u32);
+        }
+        put(&mut bytes, 32, 68);
+        put(&mut bytes, 36, 0x20008000);
+
+        let conp_abs = 32 + conp_data_offset;
+        put(&mut bytes, conp_abs, conp_payload.len() as u32);
+        bytes[conp_abs + 4..conp_abs + 4 + conp_payload.len()].copy_from_slice(&conp_payload);
+
+        let vctp_abs = 32 + vctp_data_offset;
+        put(&mut bytes, vctp_abs, vctp_coded.len() as u32);
+        bytes[vctp_abs + 4..vctp_abs + 4 + vctp_coded.len()].copy_from_slice(&vctp_coded);
+
+        put(&mut bytes, info_offset + 40, 32);
+        put(&mut bytes, info_offset + 44, 52);
+        put(&mut bytes, info_offset + 48, info_size as u32);
+        let table = info_offset + 52;
+        put(&mut bytes, table, 2);
+        bytes[table + 4..table + 8].copy_from_slice(b"LVSR");
+        put(&mut bytes, table + 12, 40);
+        bytes[table + 16..table + 20].copy_from_slice(b"CONP");
+        put(&mut bytes, table + 24, 60);
+        bytes[table + 28..table + 32].copy_from_slice(b"VCTP");
+        put(&mut bytes, table + 36, 80);
+        put(&mut bytes, table + 60 + 12, conp_data_offset as u32);
+        put(&mut bytes, table + 80 + 12, vctp_data_offset as u32);
+        bytes
+    }
+
     fn put(bytes: &mut [u8], offset: usize, value: u32) {
         bytes[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
     }
@@ -845,6 +977,7 @@ mod tests {
             false,
             false,
             true,
+            false,
         )
         .unwrap();
         assert_eq!(
@@ -859,11 +992,56 @@ mod tests {
                 false,
                 false,
                 true,
+                false,
             )
             .unwrap()
             .0
             .linked_library,
             None
         );
+    }
+
+    #[test]
+    fn reads_connector_pane_pattern_only_when_requested_and_only_for_vi_resources() {
+        let bytes = fixture_with_connector_pane(0x78); // conId 4815, pattern index 15
+        assert_eq!(
+            read_facts_with_connector_pane_pattern(&bytes, true)
+                .unwrap()
+                .connector_pane_pattern,
+            Some(15)
+        );
+        assert_eq!(
+            read_facts_with_connector_pane_pattern(&bytes, false)
+                .unwrap()
+                .connector_pane_pattern,
+            None
+        );
+        let mut control_bytes = bytes;
+        let info_offset = u32::from_be_bytes(control_bytes[16..20].try_into().unwrap()) as usize;
+        for offset in [8, info_offset + 8] {
+            control_bytes[offset..offset + 4].copy_from_slice(b"LVCC");
+        }
+        assert_eq!(
+            read_facts_with_connector_pane_pattern(&control_bytes, true)
+                .unwrap()
+                .connector_pane_pattern,
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_missing_connector_pane_blocks_only_when_requested() {
+        let bytes = fixture(1 << 10);
+        assert!(read_facts_with_connector_pane_pattern(&bytes, true).is_err());
+        assert!(read_facts_with_connector_pane_pattern(&bytes, false).is_ok());
+    }
+
+    #[test]
+    fn rejects_duplicate_connector_pane_blocks() {
+        let mut bytes = fixture_with_connector_pane(0x08);
+        let info_offset = u32::from_be_bytes(bytes[16..20].try_into().unwrap()) as usize;
+        let table = info_offset + 52;
+        bytes[table + 28..table + 32].copy_from_slice(b"CONP");
+        assert!(read_facts_with_connector_pane_pattern(&bytes, true).is_err());
     }
 }

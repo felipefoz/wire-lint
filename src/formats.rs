@@ -1,5 +1,6 @@
 //! Shared facts and dispatch for native VI/RSRC and XML LabVIEW formats.
 
+mod connector;
 mod heap;
 mod rsrc;
 mod xml;
@@ -76,6 +77,9 @@ pub struct FileFacts {
     /// Each front-panel terminal's icon-style flag, in heap order; absent for
     /// controls and XML containers.
     pub terminal_icon_styles: Option<Vec<bool>>,
+    /// Index (0-35) of the VI's connector pane pattern among LabVIEW's 36
+    /// fixed terminal layouts; absent for controls and XML containers.
+    pub connector_pane_pattern: Option<u8>,
 }
 
 /// Reads a VI-family RSRC file or an XML project/library/class document.
@@ -101,6 +105,7 @@ pub fn read_facts(
         read_description,
         read_password,
         false,
+        false,
     )
     .map(|(facts, _)| facts)
 }
@@ -113,6 +118,7 @@ pub fn read_facts_with_orphaned_vi(
     read_description: bool,
     read_password: bool,
     read_orphaned_vi: bool,
+    read_connector_pane_pattern: bool,
 ) -> io::Result<(FileFacts, Vec<Vec<u8>>)> {
     let xml = path.extension().and_then(|value| value.to_str());
     match xml {
@@ -135,6 +141,7 @@ pub fn read_facts_with_orphaned_vi(
             read_description,
             read_password,
             read_orphaned_vi,
+            read_connector_pane_pattern,
         ),
     }
 }

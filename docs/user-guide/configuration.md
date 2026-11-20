@@ -63,6 +63,7 @@ rules:
 | `rules.saved-version.minimum-version` | Quoted `major.minor` string | `'20.0'` if neither bound is set; otherwise no implicit minimum |
 | `rules.saved-version.maximum-version` | Quoted `major.minor` string | No maximum |
 | `rules.debugging-status.fail-when` | `enabled`, `disabled` | `enabled` |
+| `rules.connector-pane-pattern.allowed-patterns` | Nonempty list of pattern names (see [rules](rules.md#connector-pane-pattern)) | Required; no default, rule is inert until set |
 | `rules.no-breakpoints` | Common `enabled` and `severity` options only | Enabled, `error` |
 
 Fields may be omitted. An omitted rule remains enabled; `rules: {}` does not

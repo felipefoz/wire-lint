@@ -91,6 +91,28 @@ pylabview attributes these source files to Mefistotelis and distributes them
 under the MIT License. Refer to its
 [license](https://github.com/mefistotelis/pylabview/blob/master/LICENSE).
 
+The `connector-pane-pattern` rule's `CONP`-to-`VCTP`-to-`Function`-TypeDesc
+chain was informed by pylabview's
+[`LVblock.py`](https://github.com/mefistotelis/pylabview/blob/master/pylabview/LVblock.py)
+(the `CONP` block's single type index, and the zlib-coded `VCTP`
+consolidated type pool's flat Type Descriptor and top-level index lists) and
+[`LVdatatype.py`](https://github.com/mefistotelis/pylabview/blob/master/pylabview/LVdatatype.py)
+(`TD_FULL_TYPE.Function`, code `0xF0`, and `TDObjectFunction`'s `pattern`
+field). None of these document what a `pattern` value means. That mapping —
+which of LabVIEW's 36 named connector pane patterns (for example
+"4x2x2x4") a given `pattern` value selects — came from
+[labview-mcp](https://github.com/Zuehlke/labview-mcp)'s
+`docs/connector-pane-patterns.tsv` and `docs/connector-pane-typecodes.tsv`,
+harvested from a real LabVIEW installation via VI Server sweeps and
+pylabview-based extraction of sampled `vi.lib` VIs. WireLint's own
+36-entry name table (`CONNECTOR_PANE_PATTERNS` in `src/rules.rs`) reproduces
+only the pattern names and terminal counts from those tables, not their
+per-terminal slot geometry or sample VI names. labview-mcp distributes its
+own code under the MIT License; refer to its
+[license](https://github.com/Zuehlke/labview-mcp/blob/main/LICENSE). See
+[decision 0024](decisions/0024-connector-pane-pattern-rule.md) for the full
+reasoning, including how the raw `pattern` field maps to a pattern offset.
+
 ## Rust dependencies
 
 WireLint uses Clap for the CLI, flate2 for zlib decompression, roxmltree for

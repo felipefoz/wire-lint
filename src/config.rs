@@ -63,6 +63,8 @@ pub struct RuleConfig {
     pub fail_when: Option<DebuggingState>,
     #[serde(default, deserialize_with = "terminal_display_style")]
     pub preferred_style: Option<TerminalDisplayStyle>,
+    #[serde(default, deserialize_with = "connector_pane_patterns")]
+    pub allowed_patterns: Option<Vec<String>>,
 }
 
 /// Rejects explicit nulls and invalid states rather than substituting a default.
@@ -79,6 +81,23 @@ where
     D: serde::Deserializer<'de>,
 {
     TerminalDisplayStyle::deserialize(deserializer).map(Some)
+}
+
+/// Requires string entries without YAML's implicit scalar-to-string coercion.
+fn connector_pane_patterns<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Vec::<serde_yaml_ng::Value>::deserialize(deserializer)?
+        .into_iter()
+        .map(|value| match value {
+            serde_yaml_ng::Value::String(name) => Ok(name),
+            _ => Err(serde::de::Error::custom(
+                "allowed-patterns entries must be strings",
+            )),
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
 }
 
 /// Accepts only a quoted major.minor string, avoiding YAML number coercion.
@@ -257,6 +276,31 @@ impl Config {
                     io::ErrorKind::InvalidData,
                     format!("preferred-style is not supported by rule '{id}'"),
                 ));
+            }
+            if id != "connector-pane-pattern" && options.allowed_patterns.is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("allowed-patterns is not supported by rule '{id}'"),
+                ));
+            }
+            if let Some(allowed) = &options.allowed_patterns {
+                if allowed.is_empty() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "connector-pane-pattern's allowed-patterns must name at least one pattern",
+                    ));
+                }
+                for name in allowed {
+                    if !crate::rules::CONNECTOR_PANE_PATTERNS
+                        .iter()
+                        .any(|(known, _)| known == name)
+                    {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("unknown connector pane pattern '{name}'"),
+                        ));
+                    }
+                }
             }
         }
         Ok(config)

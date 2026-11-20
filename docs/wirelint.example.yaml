@@ -65,3 +65,10 @@ rules:
     enabled: true
     severity: warning
     preferred-style: data-type
+  # Restrict VI connector panes to a set of allowed terminal patterns, named
+  # like "4x2x2x4" (see the user guide for the full list of 36 names).
+  connector-pane-pattern:
+    enabled: true
+    severity: warning
+    allowed-patterns:
+      - "4x2x2x4"

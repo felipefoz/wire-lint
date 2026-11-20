@@ -23,6 +23,7 @@ and shared `enabled` and `severity` configuration options. See
 - [orphaned-vi](#orphaned-vi)
 - [class-mutation-history](#class-mutation-history)
 - [terminal-style](#terminal-style)
+- [connector-pane-pattern](#connector-pane-pattern)
 
 ## Execution order
 
@@ -444,6 +445,78 @@ bounded `BDHb` heap walk as [bookmark directives](#skipping-a-rule-with-a-bookma
 the same format limitations apply, including the 64 MiB heap size bound and
 support for only the compressed version-b format. WireLint does not change
 any terminal's display style.
+
+## `connector-pane-pattern`
+
+Restricts a VI's connector pane to a configured set of allowed terminal
+patterns, each one of LabVIEW's 36 fixed layouts chosen in the Icon/connector
+pane editor. The rule is enabled by default with `warning` severity and
+applies to VI and VI-template files (`.vi`, `.vit`, `.vim`); controls have no
+connector pane and are skipped.
+
+```yaml
+rules:
+  connector-pane-pattern:
+    enabled: true
+    severity: warning
+    allowed-patterns:
+      - "4x2x2x4"
+```
+
+`allowed-patterns` is required and must name at least one pattern from the
+table below; unknown names are a configuration error. Without a configured
+`allowed-patterns` list, the rule is inert: it reports nothing, and a VI's
+connector pane data is not read at all, so malformed connector pane data in
+that case is not an analysis error either. A VI is reported only when its own
+pattern's name is not in the configured set; the finding repeats the
+configured names so the message is self-contained:
+
+```text
+Example.vi: warning [connector-pane-pattern]: This VI's connector pane uses pattern '2x1', which is not in the allowed set: 4x2x2x4.
+```
+
+### Allowed pattern names
+
+Names match the LabVIEW Wiki's published shape notation for each pattern
+(for example `4x2x2x4`), not a LabVIEW on-screen label; LabVIEW does not
+name patterns in its own connector pane menu.
+
+| Name | Terminals | Name | Terminals |
+| --- | --- | --- | --- |
+| `1` | 1 | `3x2x2x4` | 11 |
+| `1x1` | 2 | `4x2x3` | 9 |
+| `2x1` | 3 | `4x1x1` | 6 |
+| `3` | 3 | `4x1x2` | 7 |
+| `3x1` | 4 | `4x1x3` | 8 |
+| `2x2` | 4 | `4x1x1x4` | 10 |
+| `4` | 4 | `4x2x1` | 7 |
+| `3x2` | 5 | `4x2x2` | 8 |
+| `4x1` | 5 | `4x2x1x4` | 11 |
+| `4x2` | 6 | `2x1x1` | 4 |
+| `3x3` | 6 | `3x1x1` | 5 |
+| `4x3` | 7 | `3x1x2` | 6 |
+| `4x4` | 8 | `5x2x2x2x5` | 16 |
+| `4x1x4` | 9 | `6x2x2x2x2x6` | 20 |
+| `4x2x4` | 10 | `8x2x2x2x2x2x2x8` | 28 |
+| `4x2x2x4` | 12 | | |
+| `3x2x1` | 6 | | |
+| `3x2x2` | 7 | | |
+| `3x2x3` | 8 | | |
+| `3x2x4` | 9 | | |
+| `3x2x2x3` | 10 | | |
+
+### How the setting is read
+
+The pattern is read from the VI's `CONP` block (a single type index into the
+VI's `VCTP` consolidated type pool) and the `Function`-type Type Descriptor
+it names: a right shift by 3 of that Type Descriptor's raw `pattern` field
+gives the pattern's position in the table above. `VCTP` is always zlib-coded,
+with the same 64 MiB size bound as the block-diagram heap reader. A missing
+or malformed `CONP`/`VCTP` chain, a Type Descriptor that is not a `Function`
+type, or a pattern code outside the 36 known patterns are each an analysis
+error, but only while `allowed-patterns` is configured. See
+[decision 0024](../decisions/0024-connector-pane-pattern-rule.md) for the
+full format research. WireLint does not change the VI's connector pane.
 
 ## Adding a built-in rule
 

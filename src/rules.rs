@@ -48,6 +48,7 @@ pub static BUILT_INS: &[&dyn Rule] = &[
     &OrphanedVi,
     &ClassMutationHistory,
     &TerminalStyle,
+    &ConnectorPanePattern,
 ];
 
 /// Default minimum release for saved LabVIEW files.
@@ -338,6 +339,78 @@ impl Rule for TerminalStyle {
     }
 }
 
+/// Name and terminal count of each of LabVIEW's 36 fixed connector pane
+/// patterns, indexed by the pattern's catalog offset (its raw `pattern`
+/// field, from the VI's own Function TypeDesc, right-shifted by 3).
+pub static CONNECTOR_PANE_PATTERNS: [(&str, u8); 36] = [
+    ("1", 1),
+    ("1x1", 2),
+    ("2x1", 3),
+    ("3", 3),
+    ("3x1", 4),
+    ("2x2", 4),
+    ("4", 4),
+    ("3x2", 5),
+    ("4x1", 5),
+    ("4x2", 6),
+    ("3x3", 6),
+    ("4x3", 7),
+    ("4x4", 8),
+    ("4x1x4", 9),
+    ("4x2x4", 10),
+    ("4x2x2x4", 12),
+    ("3x2x1", 6),
+    ("3x2x2", 7),
+    ("3x2x3", 8),
+    ("3x2x4", 9),
+    ("3x2x2x3", 10),
+    ("3x2x2x4", 11),
+    ("4x2x3", 9),
+    ("4x1x1", 6),
+    ("4x1x2", 7),
+    ("4x1x3", 8),
+    ("4x1x1x4", 10),
+    ("4x2x1", 7),
+    ("4x2x2", 8),
+    ("4x2x1x4", 11),
+    ("2x1x1", 4),
+    ("3x1x1", 5),
+    ("3x1x2", 6),
+    ("5x2x2x2x5", 16),
+    ("6x2x2x2x2x6", 20),
+    ("8x2x2x2x2x2x2x8", 28),
+];
+
+/// Restricts a VI's connector pane to a configured set of allowed patterns.
+struct ConnectorPanePattern;
+
+impl Rule for ConnectorPanePattern {
+    fn id(&self) -> &'static str {
+        "connector-pane-pattern"
+    }
+
+    fn description(&self) -> &'static str {
+        "Restrict VI connector panes to a configured set of allowed patterns"
+    }
+
+    fn default_severity(&self) -> Severity {
+        Severity::Warning
+    }
+
+    fn check(&self, facts: &FileFacts, options: Option<&RuleConfig>) -> Option<String> {
+        let pattern_index = facts.connector_pane_pattern?;
+        let allowed = options.and_then(|options| options.allowed_patterns.as_ref())?;
+        let (name, _terminals) = CONNECTOR_PANE_PATTERNS[pattern_index as usize];
+        if allowed.iter().any(|pattern| pattern == name) {
+            return None;
+        }
+        Some(format!(
+            "This VI's connector pane uses pattern '{name}', which is not in the allowed set: {}.",
+            allowed.join(", ")
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -360,6 +433,7 @@ mod tests {
                     orphaned_vi: None,
                     has_mutation_history: None,
                     terminal_icon_styles: None,
+                    connector_pane_pattern: None,
                 },
                 None
             )
@@ -380,6 +454,7 @@ mod tests {
                     orphaned_vi: None,
                     has_mutation_history: None,
                     terminal_icon_styles: None,
+                    connector_pane_pattern: None,
                 },
                 None
             )
@@ -433,6 +508,7 @@ mod tests {
                 orphaned_vi: None,
                 has_mutation_history: None,
                 terminal_icon_styles: None,
+                connector_pane_pattern: None,
             };
             assert_eq!(rule.check(&facts, None).is_some(), violation);
         }
@@ -532,6 +608,7 @@ mod tests {
                 orphaned_vi: None,
                 has_mutation_history: None,
                 terminal_icon_styles: None,
+                connector_pane_pattern: None,
             };
             let options = RuleConfig {
                 enabled: true,
@@ -540,6 +617,7 @@ mod tests {
                 maximum_version: maximum,
                 fail_when: None,
                 preferred_style: None,
+                allowed_patterns: None,
             };
             assert_eq!(
                 SavedVersion.check(&facts, Some(&options)).as_deref(),
@@ -566,6 +644,7 @@ mod tests {
                 orphaned_vi: None,
                 has_mutation_history: None,
                 terminal_icon_styles: None,
+                connector_pane_pattern: None,
             };
             assert_eq!(rule.check(&facts, None).is_some(), violation);
         }
@@ -587,6 +666,7 @@ mod tests {
                 orphaned_vi: None,
                 has_mutation_history: None,
                 terminal_icon_styles: None,
+                connector_pane_pattern: None,
             };
             assert_eq!(
                 DebuggingStatus.check(&facts, None).is_some(),
@@ -600,6 +680,7 @@ mod tests {
                     maximum_version: None,
                     fail_when: Some(fail_when),
                     preferred_style: None,
+                    allowed_patterns: None,
                 };
                 let finding = DebuggingStatus.check(&facts, Some(&options));
                 assert_eq!(
@@ -635,6 +716,7 @@ mod tests {
                 orphaned_vi: None,
                 has_mutation_history: None,
                 terminal_icon_styles: None,
+                connector_pane_pattern: None,
             };
             assert_eq!(NoBreakpoints.check(&facts, None).is_some(), expected);
         }
@@ -657,6 +739,7 @@ mod tests {
                 orphaned_vi: None,
                 has_mutation_history: None,
                 terminal_icon_styles: None,
+                connector_pane_pattern: None,
             };
             assert_eq!(PasswordSet.check(&facts, None).is_some(), expected);
         }
@@ -681,6 +764,7 @@ mod tests {
                 orphaned_vi: None,
                 has_mutation_history: None,
                 terminal_icon_styles: None,
+                connector_pane_pattern: None,
             };
             assert_eq!(AutoErrorHandling.check(&facts, None).is_some(), expected);
         }
@@ -703,6 +787,7 @@ mod tests {
                 orphaned_vi,
                 has_mutation_history: None,
                 terminal_icon_styles: None,
+                connector_pane_pattern: None,
             };
             assert_eq!(OrphanedVi.check(&facts, None).is_some(), expected);
         }
@@ -727,6 +812,7 @@ mod tests {
                 orphaned_vi: None,
                 has_mutation_history,
                 terminal_icon_styles: None,
+                connector_pane_pattern: None,
             };
             assert_eq!(ClassMutationHistory.check(&facts, None).is_some(), expected);
         }
@@ -756,6 +842,7 @@ mod tests {
                 orphaned_vi: None,
                 has_mutation_history: None,
                 terminal_icon_styles,
+                connector_pane_pattern: None,
             };
             assert_eq!(TerminalStyle.check(&facts, None).is_some(), expected);
         }
@@ -782,6 +869,7 @@ mod tests {
                 orphaned_vi: None,
                 has_mutation_history: None,
                 terminal_icon_styles: Some(terminal_icon_styles),
+                connector_pane_pattern: None,
             };
             let options = RuleConfig {
                 enabled: true,
@@ -790,12 +878,74 @@ mod tests {
                 maximum_version: None,
                 fail_when: None,
                 preferred_style: Some(preferred_style),
+                allowed_patterns: None,
             };
             assert_eq!(
                 TerminalStyle.check(&facts, Some(&options)).is_some(),
                 expected,
                 "{preferred_style:?}"
             );
+        }
+    }
+
+    fn facts_with_connector_pane_pattern(connector_pane_pattern: Option<u8>) -> FileFacts {
+        FileFacts {
+            separate_compiled_code: true,
+            has_description: None,
+            saved_version: None,
+            debugging_enabled: None,
+            has_breakpoints: None,
+            auto_error_handling: None,
+            has_password: None,
+            linked_library: None,
+            library_members: None,
+            orphaned_vi: None,
+            has_mutation_history: None,
+            terminal_icon_styles: None,
+            connector_pane_pattern,
+        }
+    }
+
+    #[test]
+    fn connector_pane_pattern_rule_is_inert_without_a_connector_pane_fact_or_an_allowed_list() {
+        assert_eq!(ConnectorPanePattern.default_severity(), Severity::Warning);
+        let facts = facts_with_connector_pane_pattern(None);
+        assert!(ConnectorPanePattern.check(&facts, None).is_none());
+        let facts = facts_with_connector_pane_pattern(Some(0));
+        assert!(ConnectorPanePattern.check(&facts, None).is_none());
+        let options = RuleConfig {
+            enabled: true,
+            severity: None,
+            minimum_version: None,
+            maximum_version: None,
+            fail_when: None,
+            preferred_style: None,
+            allowed_patterns: None,
+        };
+        assert!(ConnectorPanePattern.check(&facts, Some(&options)).is_none());
+    }
+
+    #[test]
+    fn connector_pane_pattern_rule_flags_patterns_outside_the_allowed_set() {
+        let allowed_patterns = vec!["1".to_owned(), "2x2".to_owned()];
+        let options = RuleConfig {
+            enabled: true,
+            severity: None,
+            minimum_version: None,
+            maximum_version: None,
+            fail_when: None,
+            preferred_style: None,
+            allowed_patterns: Some(allowed_patterns),
+        };
+        // Index 0 -> "1" (allowed), index 5 -> "2x2" (allowed), index 2 -> "2x1" (not allowed).
+        for (pattern_index, expected) in [(0u8, false), (5, false), (2, true)] {
+            let facts = facts_with_connector_pane_pattern(Some(pattern_index));
+            let finding = ConnectorPanePattern.check(&facts, Some(&options));
+            assert_eq!(finding.is_some(), expected, "{pattern_index}");
+            if let Some(message) = finding {
+                assert!(message.contains("'2x1'"));
+                assert!(message.contains("1, 2x2"));
+            }
         }
     }
 }
