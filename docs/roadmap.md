@@ -36,3 +36,14 @@ decisions are omitted.
   uploads. Currently, one format can be written per invocation, callers choose
   the scan root, and reports are written to local files. See
   [decision 0011](decisions/0011-ci-code-quality-reports.md).
+
+## Releases
+
+- **Commit-driven version bumps:** trigger releases from every push to `main`
+  instead of only pushes that change `[package].version`, computing the next
+  version from Conventional Commits (e.g. via git-cliff's `--bumped-version`)
+  rather than a maintainer editing `Cargo.toml`. Needs its own decision on
+  what counts as a releasable change, since every commit type would then
+  decide whether a release happens at all. See
+  [decision 0023](decisions/0023-automated-changelog-and-tagging.md).
+
